@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Highlight",
+  "version": "0.0.1",
+  "description": "A persistent highlight and bookmark system for ChatGPT and the web.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": ["content.js"]
+    }
+  ]
+}
