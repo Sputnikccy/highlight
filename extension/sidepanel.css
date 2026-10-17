@@ -71,6 +71,12 @@ h1 {
 	margin-top: 16px;
 }
 
+.control-actions {
+	display: flex;
+	align-items: stretch;
+	gap: 6px;
+}
+
 .search-field {
 	display: flex;
 	align-items: center;
@@ -99,13 +105,65 @@ h1 {
 	font: inherit;
 }
 
-.filter-button {
+.filter-button,
+.export-menu summary {
 	padding: 8px 10px;
 	border: 1px solid #dcdad2;
 	border-radius: 10px;
 	background: #fff;
 	color: #5f5d55;
 	cursor: pointer;
+}
+
+.export-menu {
+	position: relative;
+}
+
+.export-menu summary {
+	display: flex;
+	height: 100%;
+	align-items: center;
+	list-style: none;
+}
+
+.export-menu summary::-webkit-details-marker {
+	display: none;
+}
+
+.export-menu[open] summary {
+	border-color: #b89a1c;
+	box-shadow: 0 0 0 2px rgba(208, 167, 0, 0.14);
+}
+
+.export-options {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 2;
+	display: grid;
+	min-width: 118px;
+	padding: 5px;
+	border: 1px solid #dcdad2;
+	border-radius: 10px;
+	background: #fff;
+	box-shadow: 0 8px 24px rgba(33, 32, 28, 0.14);
+}
+
+.export-options button {
+	padding: 8px 10px;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: #5f5d55;
+	text-align: left;
+	cursor: pointer;
+}
+
+.export-options button:hover,
+.export-options button:focus-visible {
+	background: #fff4bd;
+	color: #5d4b00;
+	outline: none;
 }
 
 .filter-button[aria-pressed="true"] {
@@ -120,23 +178,50 @@ h1 {
 	padding: 16px;
 }
 
-.conversation-group h2 {
-	margin: 0;
-	font-size: 13px;
-	font-weight: 700;
-}
-
 .group-header {
 	display: flex;
+	width: 100%;
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
 	margin-bottom: 8px;
 	padding: 0 4px;
+	border: 0;
+	background: transparent;
 	color: #66645c;
+	text-align: left;
+	cursor: pointer;
+}
+
+.group-header:hover,
+.group-header:focus-visible {
+	color: #2f2e2a;
+	outline: none;
+}
+
+.group-title {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 5px;
+}
+
+.group-disclosure {
+	flex: 0 0 10px;
+	font-size: 16px;
+	line-height: 1;
+}
+
+.group-title-text {
+	overflow: hidden;
+	font-size: 13px;
+	font-weight: 700;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .group-count {
+	flex: 0 0 auto;
 	color: #8a887f;
 	font-size: 11px;
 }
@@ -147,6 +232,10 @@ h1 {
 	margin: 0;
 	padding: 0;
 	list-style: none;
+}
+
+.group-items[hidden] {
+	display: none;
 }
 
 .highlight-card {
@@ -185,6 +274,84 @@ h1 {
 	vertical-align: -4px;
 }
 
+.note-preview {
+	margin: 0;
+	padding: 10px 16px;
+	border-top: 1px solid #efeee9;
+	background: #fffdf5;
+	color: #625f54;
+	font-size: 12px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+}
+
+.note-preview::before {
+	content: "Note · ";
+	color: #9a7c00;
+	font-weight: 700;
+}
+
+.note-editor {
+	display: grid;
+	gap: 8px;
+	padding: 12px 16px;
+	border-top: 1px solid #efeee9;
+	background: #fffdf5;
+}
+
+.note-editor label {
+	display: grid;
+	gap: 5px;
+	color: #77756c;
+	font-size: 11px;
+	font-weight: 700;
+}
+
+.note-editor textarea {
+	width: 100%;
+	resize: vertical;
+	padding: 8px 9px;
+	border: 1px solid #dcdad2;
+	border-radius: 8px;
+	outline: 0;
+	background: #fff;
+	color: #20201d;
+	font: inherit;
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.note-editor textarea:focus {
+	border-color: #b89a1c;
+	box-shadow: 0 0 0 2px rgba(208, 167, 0, 0.14);
+}
+
+.note-editor-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 6px;
+}
+
+.note-editor-actions button {
+	padding: 6px 8px;
+	border: 1px solid #dcdad2;
+	border-radius: 7px;
+	background: #fff;
+	color: #66645c;
+	cursor: pointer;
+}
+
+.note-editor-actions .primary-button {
+	border-color: #b28f00;
+	background: #d0a700;
+	color: #fff;
+}
+
+.note-editor-actions button:disabled {
+	opacity: 0.6;
+	cursor: wait;
+}
+
 .card-footer {
 	display: flex;
 	align-items: center;
@@ -210,6 +377,24 @@ h1 {
 	background: transparent;
 	color: #77756c;
 	cursor: pointer;
+}
+
+.note-button {
+	flex: 0 0 auto;
+	padding: 6px 7px;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: #77756c;
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.note-button:hover,
+.note-button:focus-visible {
+	background: #f0efe9;
+	color: #34332f;
+	outline: none;
 }
 
 .delete-button:hover,
@@ -291,6 +476,16 @@ h1 {
 	border: 0;
 }
 
+@media (max-width: 420px) {
+	.library-controls {
+		grid-template-columns: 1fr;
+	}
+
+	.control-actions {
+		justify-content: flex-end;
+	}
+}
+
 @media (prefers-color-scheme: dark) {
 	:root,
 	body {
@@ -309,10 +504,18 @@ h1 {
 	}
 
 	.search-field,
-	.filter-button {
+	.filter-button,
+	.export-menu summary,
+	.export-options,
+	.note-editor textarea,
+	.note-editor-actions button {
 		border-color: #41423d;
 		background: #292a27;
 		color: #cfcec7;
+	}
+
+	.export-options {
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 	}
 
 	.filter-button[aria-pressed="true"] {
@@ -335,8 +538,20 @@ h1 {
 		border-color: #3b3c37;
 	}
 
+	.note-preview,
+	.note-editor {
+		border-color: #3b3c37;
+		background: #302f27;
+		color: #d0cec4;
+	}
+
 	.group-header {
 		color: #c5c4bd;
+	}
+
+	.group-header:hover,
+	.group-header:focus-visible {
+		color: #fff;
 	}
 
 	.empty-state h2 {

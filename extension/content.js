@@ -2,6 +2,14 @@ const STORAGE_KEY = "highlights";
 const HIGHLIGHT_NAME = "highlight-extension-selection";
 const CONTEXT_LENGTH = 32;
 const RESTORE_DEBOUNCE_MS = 120;
+const TITLE_SYNC_DEBOUNCE_MS = 500;
+const NAVIGATION_SEARCH_INTERVAL_MS = 450;
+const NAVIGATION_STAGES = [
+	{ timeoutMs: 20000, maxAttempts: 36 },
+	{ timeoutMs: 25000, maxAttempts: 48 },
+	{ timeoutMs: 30000, maxAttempts: 60 },
+	{ timeoutMs: 15000, maxAttempts: 30 },
+];
 
 let pendingSelection = null;
 let allHighlights = [];
@@ -21,6 +29,11 @@ let toastHighlightId = null;
 let pendingScrollHighlightId = null;
 let scrollAttemptCount = 0;
 let scrollRetryTimer = null;
+let navigationTimeoutTimer = null;
+let navigationSearchTimer = null;
+let navigationSearchAttempt = 0;
+let navigationStage = 0;
+let titleSyncTimer = null;
 
 function elementFor(node) {
 	return node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
@@ -123,6 +136,35 @@ function getConversationId(url) {
 	return match ? match[1] : null;
 }
 
+function normalizeConversationTitle(value) {
+	const title = String(value || "")
+		.replace(/\s+/g, " ")
+		.replace(/^\(\d+\)\s*/, "")
+		.replace(/^ChatGPT\s*[-–—|]\s*/i, "")
+		.replace(/\s*[-–—|]\s*ChatGPT\s*$/i, "")
+		.trim();
+	if (!title || /^(chatgpt|new chat)$/i.test(title)) return null;
+	return title.slice(0, 200);
+}
+
+function getConversationTitle() {
+	const pageTitle = normalizeConversationTitle(document.title);
+	if (pageTitle) return pageTitle;
+
+	const conversationId = getConversationId(window.location.href);
+	if (!conversationId) return null;
+	for (const link of document.querySelectorAll('a[href*="/c/"]')) {
+		try {
+			if (getConversationId(new URL(link.href, window.location.href).href) !== conversationId) continue;
+			const title = normalizeConversationTitle(link.getAttribute("aria-label") || link.textContent);
+			if (title) return title;
+		} catch {
+			// Ignore malformed navigation links and continue looking for a title.
+		}
+	}
+	return null;
+}
+
 function buildAnchor(range, preferredRoot = null) {
 	const exactText = range.toString();
 	if (!exactText.trim()) return null;
@@ -148,11 +190,41 @@ function buildAnchor(range, preferredRoot = null) {
 		endOffset,
 		url: window.location.href,
 		conversationId: getConversationId(window.location.href),
+		conversationTitle: getConversationTitle(),
 		messageLocator: getMessageLocator(messageRoot),
 		tags: [],
+		note: "",
 		starred: false,
 		createdAt: new Date().toISOString(),
 	};
+}
+
+async function syncConversationTitle() {
+	const conversationId = getConversationId(window.location.href);
+	const conversationTitle = getConversationTitle();
+	if (!conversationId || !conversationTitle) return false;
+
+	const stored = await chrome.storage.local.get(STORAGE_KEY);
+	const storedHighlights = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
+	let changed = false;
+	const nextHighlights = storedHighlights.map(highlight => {
+		if (highlight.conversationId !== conversationId || highlight.conversationTitle === conversationTitle) {
+			return highlight;
+		}
+		changed = true;
+		return { ...highlight, conversationTitle };
+	});
+	if (changed) await chrome.storage.local.set({ [STORAGE_KEY]: nextHighlights });
+	return changed;
+}
+
+function scheduleConversationTitleSync() {
+	clearTimeout(titleSyncTimer);
+	titleSyncTimer = setTimeout(() => {
+		syncConversationTitle().catch(error => {
+			console.warn("[Highlight] conversation title sync failed", error);
+		});
+	}, TITLE_SYNC_DEBOUNCE_MS);
 }
 
 function capturePendingSelection() {
@@ -306,9 +378,11 @@ function matchingPrefixLength(expected, actual) {
 }
 
 function getContextScore(text, index, anchor) {
-	const before = text.slice(Math.max(0, index - anchor.prefix.length), index);
-	const after = text.slice(index + anchor.exactText.length, index + anchor.exactText.length + anchor.suffix.length);
-	return matchingSuffixLength(anchor.prefix, before) + matchingPrefixLength(anchor.suffix, after);
+	const prefix = anchor.prefix || "";
+	const suffix = anchor.suffix || "";
+	const before = text.slice(Math.max(0, index - prefix.length), index);
+	const after = text.slice(index + anchor.exactText.length, index + anchor.exactText.length + suffix.length);
+	return matchingSuffixLength(prefix, before) + matchingPrefixLength(suffix, after);
 }
 
 function getTextPosition(root, offset) {
@@ -384,6 +458,74 @@ function resolveAnchor(anchor, messageRoots) {
 	return null;
 }
 
+function normalizeComparableText(value) {
+	return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function rangeMatchesAnchor(range, anchor) {
+	return range?.toString() === anchor.exactText ||
+		normalizeComparableText(range?.toString()) === normalizeComparableText(anchor.exactText);
+}
+
+function escapeRegularExpression(value) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getDocumentTextMatches(text, anchor, allowWhitespaceChanges) {
+	const matches = [];
+	if (!allowWhitespaceChanges) {
+		let index = text.indexOf(anchor.exactText);
+		while (index !== -1) {
+			matches.push({ index, length: anchor.exactText.length });
+			index = text.indexOf(anchor.exactText, index + 1);
+		}
+		return matches;
+	}
+
+	const tokens = anchor.exactText.trim().split(/\s+/).filter(Boolean);
+	if (tokens.length === 0) return matches;
+	const expression = new RegExp(tokens.map(escapeRegularExpression).join("\\s+"), "gu");
+	let match;
+	while ((match = expression.exec(text))) {
+		matches.push({ index: match.index, length: match[0].length });
+		if (match[0].length === 0) expression.lastIndex += 1;
+	}
+	return matches;
+}
+
+function resolveAnchorInDocument(anchor, allowWhitespaceChanges = false) {
+	if (!anchor?.exactText) return null;
+	const root = document.querySelector("main, [role='main']");
+	if (!root) return null;
+	const text = root.textContent || "";
+	const prefix = anchor.prefix || "";
+	const suffix = anchor.suffix || "";
+	const matches = getDocumentTextMatches(text, anchor, allowWhitespaceChanges)
+		.map(match => {
+			const before = text.slice(Math.max(0, match.index - prefix.length), match.index);
+			const after = text.slice(match.index + match.length, match.index + match.length + suffix.length);
+			return {
+				...match,
+				contextScore: matchingSuffixLength(prefix, before) + matchingPrefixLength(suffix, after),
+			};
+		})
+		.sort((left, right) => right.contextScore - left.contextScore);
+
+	if (
+		matches.length > 1 &&
+		matches[0].contextScore === 0 &&
+		matches[0].contextScore === matches[1].contextScore
+	) {
+		return null;
+	}
+
+	for (const match of matches) {
+		const range = rangeFromOffsets(root, match.index, match.index + match.length);
+		if (rangeMatchesAnchor(range, anchor)) return range;
+	}
+	return null;
+}
+
 function renderHighlights() {
 	if (typeof CSS === "undefined" || !CSS.highlights || typeof Highlight === "undefined") {
 		if (!unavailableApiLogged) {
@@ -418,9 +560,10 @@ function dismissToast() {
 	toastElement = null;
 }
 
-function showActionToast(message, actionLabel, highlightId, action) {
+function showActionToast(message, actionLabel, highlightId, action, options = {}) {
 	dismissToast();
 	if (!document.body) return;
+	const timeoutMs = options.timeoutMs === undefined ? 5000 : options.timeoutMs;
 
 	const toast = document.createElement("div");
 	toast.className = "highlight-extension-toast";
@@ -428,6 +571,8 @@ function showActionToast(message, actionLabel, highlightId, action) {
 	toast.setAttribute("aria-live", "polite");
 	const label = document.createElement("span");
 	label.textContent = message;
+	const actions = document.createElement("span");
+	actions.className = "highlight-extension-toast-actions";
 	const button = document.createElement("button");
 	button.type = "button";
 	button.textContent = actionLabel;
@@ -436,14 +581,29 @@ function showActionToast(message, actionLabel, highlightId, action) {
 		try {
 			if (await action()) dismissToast();
 		} catch (error) {
-			console.error("[Highlight] remove failed", error);
+			console.error("[Highlight] toast action failed", error);
 		}
 	});
-	toast.append(label, button);
+	actions.append(button);
+	if (options.dismissible) {
+		const dismissButton = document.createElement("button");
+		dismissButton.type = "button";
+		dismissButton.className = "highlight-extension-toast-dismiss";
+		dismissButton.textContent = "×";
+		dismissButton.setAttribute("aria-label", "Dismiss");
+		dismissButton.addEventListener("click", event => {
+			event.stopPropagation();
+			dismissToast();
+		});
+		actions.append(dismissButton);
+	}
+	toast.append(label, actions);
 	document.body.append(toast);
 	toastElement = toast;
 	toastHighlightId = highlightId;
-	toastTimer = setTimeout(dismissToast, 5000);
+	if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+		toastTimer = setTimeout(dismissToast, timeoutMs);
+	}
 }
 
 async function removeHighlight(highlightId) {
@@ -522,6 +682,7 @@ document.addEventListener("click", event => {
 });
 
 function restoreHighlights() {
+	removeDisconnectedRanges();
 	refreshActiveHighlights();
 	const unresolved = activeHighlights.filter(anchor => !resolvedRanges.has(anchor.id));
 	if (unresolved.length === 0) {
@@ -540,8 +701,106 @@ function restoreHighlights() {
 		}
 	}
 
+	if (
+		pendingScrollHighlightId &&
+		navigationStage >= 2 &&
+		!hasConnectedResolvedRange(pendingScrollHighlightId)
+	) {
+		const pendingAnchor = activeHighlights.find(anchor => anchor.id === pendingScrollHighlightId);
+		const fallbackRange = resolveAnchorInDocument(pendingAnchor, navigationStage >= 3);
+		if (fallbackRange) {
+			resolvedRanges.set(pendingScrollHighlightId, fallbackRange);
+			changed = true;
+		}
+	}
+
 	if (changed) renderHighlights();
 	tryScrollToPendingHighlight();
+}
+
+function getScrollableAncestor(element) {
+	let current = element;
+	while (current && current !== document.body) {
+		const style = window.getComputedStyle(current);
+		if (
+			/(auto|scroll|overlay)/.test(style.overflowY) &&
+			current.scrollHeight > current.clientHeight + 1
+		) {
+			return current;
+		}
+		current = current.parentElement;
+	}
+
+	const scrollingElement = document.scrollingElement || document.documentElement;
+	return scrollingElement.scrollHeight > scrollingElement.clientHeight + 1
+		? scrollingElement
+		: null;
+}
+
+function getConversationScrollContainer() {
+	const messageRoots = getMessageRoots();
+	const reference = messageRoots[messageRoots.length - 1] || document.querySelector("main, [role='main']");
+	return reference ? getScrollableAncestor(reference) : null;
+}
+
+function scrollRangeToCenter(range, behavior) {
+	const target = elementFor(range.startContainer);
+	if (!target) return false;
+
+	const scroller = getScrollableAncestor(target);
+	const rect = range.getBoundingClientRect();
+	if (!scroller || (!rect.width && !rect.height)) {
+		target.scrollIntoView({ behavior, block: "center", inline: "nearest" });
+		return true;
+	}
+
+	const scrollingElement = document.scrollingElement || document.documentElement;
+	if (scroller === scrollingElement) {
+		window.scrollBy({
+			top: rect.top + (rect.height / 2) - (window.innerHeight / 2),
+			behavior,
+		});
+		return true;
+	}
+
+	const scrollerRect = scroller.getBoundingClientRect();
+	scroller.scrollBy({
+		top: rect.top + (rect.height / 2) - scrollerRect.top - (scroller.clientHeight / 2),
+		behavior,
+	});
+	return true;
+}
+
+function hasConnectedResolvedRange(highlightId) {
+	const range = resolvedRanges.get(highlightId);
+	return Boolean(range?.startContainer.isConnected && range.endContainer.isConnected);
+}
+
+function loadEarlierConversationContent() {
+	if (!pendingScrollHighlightId || hasConnectedResolvedRange(pendingScrollHighlightId)) return;
+	const stageConfig = NAVIGATION_STAGES[navigationStage] || NAVIGATION_STAGES[0];
+	if (navigationSearchAttempt >= stageConfig.maxAttempts) return;
+
+	navigationSearchAttempt += 1;
+	const scroller = getConversationScrollContainer();
+	if (scroller) {
+		if (navigationStage < 2) {
+			const distance = Math.max(scroller.clientHeight * 0.9, 700);
+			scroller.scrollTop = Math.max(0, scroller.scrollTop - distance);
+		} else {
+			scroller.scrollTop = 0;
+		}
+		scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+	}
+
+	clearTimeout(navigationSearchTimer);
+	navigationSearchTimer = setTimeout(() => {
+		removeDisconnectedRanges();
+		restoreHighlights();
+		if (pendingScrollHighlightId && !hasConnectedResolvedRange(pendingScrollHighlightId)) {
+			loadEarlierConversationContent();
+		}
+	}, NAVIGATION_SEARCH_INTERVAL_MS);
 }
 
 function tryScrollToPendingHighlight() {
@@ -549,13 +808,7 @@ function tryScrollToPendingHighlight() {
 	const range = resolvedRanges.get(pendingScrollHighlightId);
 	if (!range?.startContainer.isConnected) return false;
 
-	const target = elementFor(range.startContainer);
-	if (!target) return false;
-	target.scrollIntoView({
-		behavior: scrollAttemptCount === 0 ? "smooth" : "auto",
-		block: "center",
-		inline: "nearest",
-	});
+	if (!scrollRangeToCenter(range, scrollAttemptCount === 0 ? "smooth" : "auto")) return false;
 	scrollAttemptCount += 1;
 	clearTimeout(scrollRetryTimer);
 	if (scrollAttemptCount < 8) {
@@ -564,8 +817,14 @@ function tryScrollToPendingHighlight() {
 			restoreHighlights();
 		}, 400);
 	} else {
+		clearTimeout(navigationTimeoutTimer);
+		clearTimeout(navigationSearchTimer);
+		navigationTimeoutTimer = null;
+		navigationSearchTimer = null;
 		pendingScrollHighlightId = null;
 		scrollAttemptCount = 0;
+		navigationSearchAttempt = 0;
+		navigationStage = 0;
 		const url = new URL(window.location.href);
 		if (url.hash.startsWith("#highlight=")) {
 			url.hash = "";
@@ -575,10 +834,72 @@ function tryScrollToPendingHighlight() {
 	return true;
 }
 
-function setPendingScrollHighlight(highlightId) {
+function setPendingScrollHighlight(highlightId, stage = 0) {
 	clearTimeout(scrollRetryTimer);
+	clearTimeout(navigationTimeoutTimer);
+	clearTimeout(navigationSearchTimer);
 	pendingScrollHighlightId = highlightId;
 	scrollAttemptCount = 0;
+	navigationSearchAttempt = 0;
+	navigationStage = Math.min(Math.max(stage, 0), NAVIGATION_STAGES.length - 1);
+	navigationSearchTimer = setTimeout(loadEarlierConversationContent, NAVIGATION_SEARCH_INTERVAL_MS);
+	const stageConfig = NAVIGATION_STAGES[navigationStage];
+	navigationTimeoutTimer = setTimeout(() => {
+		if (pendingScrollHighlightId !== highlightId || hasConnectedResolvedRange(highlightId)) return;
+		clearTimeout(navigationSearchTimer);
+		navigationSearchTimer = null;
+		navigationTimeoutTimer = null;
+		pendingScrollHighlightId = null;
+		scrollAttemptCount = 0;
+		navigationSearchAttempt = 0;
+
+		if (navigationStage === 0) {
+			showActionToast(
+				"Step 1 complete · target not in loaded messages",
+				"Search earlier",
+				highlightId,
+				async () => {
+					setPendingScrollHighlight(highlightId, 1);
+					scheduleRestore();
+					return true;
+				},
+				{ timeoutMs: null, dismissible: true },
+			);
+		} else if (navigationStage === 1) {
+			showActionToast(
+				"Step 2 complete · more history searched",
+				"Continue to oldest",
+				highlightId,
+				async () => {
+					setPendingScrollHighlight(highlightId, 2);
+					scheduleRestore();
+					return true;
+				},
+				{ timeoutMs: null, dismissible: true },
+			);
+		} else if (navigationStage === 2) {
+			showActionToast(
+				"Step 3 complete · exact anchor still missing",
+				"Match by text",
+				highlightId,
+				async () => {
+					setPendingScrollHighlight(highlightId, 3);
+					scheduleRestore();
+					return true;
+				},
+				{ timeoutMs: null, dismissible: true },
+			);
+		} else {
+			navigationStage = 0;
+			showActionToast(
+				"Source text may have changed",
+				"Dismiss",
+				highlightId,
+				async () => true,
+				{ timeoutMs: null },
+			);
+		}
+	}, stageConfig.timeoutMs);
 }
 
 function getHighlightIdFromUrl() {
@@ -613,7 +934,7 @@ function removeDisconnectedRanges() {
 			!range.startContainer.isConnected ||
 			!range.endContainer.isConnected ||
 			!anchor ||
-			range.toString() !== anchor.exactText
+			!rangeMatchesAnchor(range, anchor)
 		) {
 			resolvedRanges.delete(id);
 			changed = true;
@@ -632,11 +953,27 @@ function startRestoreObserver() {
 		);
 		const hasUnresolved = activeHighlights.some(anchor => !resolvedRanges.has(anchor.id));
 
+		if (pageChanged) scheduleConversationTitleSync();
 		if (pageChanged || disconnected || (relevantMutation && hasUnresolved)) scheduleRestore();
 	});
 	observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-	window.addEventListener("popstate", scheduleRestore);
-	window.addEventListener("hashchange", scheduleRestore);
+	window.addEventListener("popstate", () => {
+		scheduleRestore();
+		scheduleConversationTitleSync();
+	});
+	window.addEventListener("hashchange", () => {
+		scheduleRestore();
+		scheduleConversationTitleSync();
+	});
+
+	const titleElement = document.querySelector("title");
+	if (titleElement) {
+		new MutationObserver(scheduleConversationTitleSync).observe(titleElement, {
+			childList: true,
+			characterData: true,
+			subtree: true,
+		});
+	}
 }
 
 function commandError(stage, error) {
@@ -737,6 +1074,7 @@ async function initialize() {
 	const navigationHighlightId = getHighlightIdFromUrl();
 	if (navigationHighlightId) setPendingScrollHighlight(navigationHighlightId);
 	restoreHighlights();
+	scheduleConversationTitleSync();
 }
 
 function handleStorageChanged(changes, areaName) {

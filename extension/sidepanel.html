@@ -21,7 +21,16 @@
 					<span aria-hidden="true">⌕</span>
 					<input id="search-input" type="search" placeholder="Search highlights" autocomplete="off">
 				</label>
-				<button id="starred-filter" class="filter-button" type="button" aria-pressed="false">☆ Starred</button>
+				<div class="control-actions">
+					<button id="starred-filter" class="filter-button" type="button" aria-pressed="false">☆ Starred</button>
+					<details id="export-menu" class="export-menu">
+						<summary>Export</summary>
+						<div class="export-options" aria-label="Export all highlights">
+							<button type="button" data-export-format="markdown">Markdown</button>
+							<button type="button" data-export-format="json">JSON</button>
+						</div>
+					</details>
+				</div>
 			</div>
 		</header>
 
