@@ -8,21 +8,31 @@
 	</head>
 	<body>
 		<header class="library-header">
-			<div>
-				<p class="eyebrow">Highlight</p>
-				<h1>Library</h1>
+			<div class="title-row">
+				<div>
+					<p class="eyebrow">Highlight</p>
+					<h1>Library</h1>
+				</div>
+				<span id="highlight-count" class="count" aria-live="polite"></span>
 			</div>
-			<span id="highlight-count" class="count" aria-live="polite"></span>
+			<div class="library-controls">
+				<label class="search-field">
+					<span class="visually-hidden">Search highlights</span>
+					<span aria-hidden="true">⌕</span>
+					<input id="search-input" type="search" placeholder="Search highlights" autocomplete="off">
+				</label>
+				<button id="starred-filter" class="filter-button" type="button" aria-pressed="false">☆ Starred</button>
+			</div>
 		</header>
 
 		<main>
 			<section id="empty-state" class="empty-state" hidden>
 				<div class="empty-icon" aria-hidden="true">✦</div>
-				<h2>No highlights yet</h2>
-				<p>Select text in a ChatGPT conversation, then choose <strong>Highlight</strong> from the context menu.</p>
+				<h2 id="empty-title">No highlights yet</h2>
+				<p id="empty-description">Select text in a ChatGPT conversation, then choose <strong>Highlight</strong> from the context menu.</p>
 			</section>
 
-			<ul id="highlight-list" class="highlight-list" aria-label="Saved highlights"></ul>
+			<div id="highlight-list" class="highlight-list" aria-label="Saved highlights"></div>
 		</main>
 
 		<p id="status" class="visually-hidden" role="status" aria-live="polite"></p>

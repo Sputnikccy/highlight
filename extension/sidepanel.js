@@ -2,10 +2,16 @@ const STORAGE_KEY = "highlights";
 
 const countElement = document.querySelector("#highlight-count");
 const emptyStateElement = document.querySelector("#empty-state");
+const emptyTitleElement = document.querySelector("#empty-title");
+const emptyDescriptionElement = document.querySelector("#empty-description");
 const listElement = document.querySelector("#highlight-list");
+const searchInputElement = document.querySelector("#search-input");
+const starredFilterElement = document.querySelector("#starred-filter");
 const statusElement = document.querySelector("#status");
 
 let highlights = [];
+let searchQuery = "";
+let starredOnly = false;
 
 function formatDate(value) {
 	const date = new Date(value);
@@ -16,13 +22,39 @@ function formatDate(value) {
 	}).format(date);
 }
 
-function getConversationLabel(highlight) {
-	if (highlight.conversationId) return `Conversation · ${formatDate(highlight.createdAt)}`;
+function getConversationKey(highlight) {
+	if (highlight.conversationId) return `conversation:${highlight.conversationId}`;
 	try {
-		return `${new URL(highlight.url).hostname} · ${formatDate(highlight.createdAt)}`;
+		const url = new URL(highlight.url);
+		return `page:${url.origin}${url.pathname}`;
 	} catch {
-		return formatDate(highlight.createdAt);
+		return "page:unknown";
 	}
+}
+
+function matchesSearch(highlight) {
+	if (!searchQuery) return true;
+	const searchableText = [highlight.exactText, ...(Array.isArray(highlight.tags) ? highlight.tags : [])]
+		.filter(Boolean)
+		.join(" ")
+		.toLocaleLowerCase();
+	return searchableText.includes(searchQuery);
+}
+
+function getVisibleHighlights() {
+	return highlights
+		.filter(highlight => (!starredOnly || highlight.starred === true) && matchesSearch(highlight))
+		.sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
+function groupHighlights(visibleHighlights) {
+	const groups = new Map();
+	for (const highlight of visibleHighlights) {
+		const key = getConversationKey(highlight);
+		if (!groups.has(key)) groups.set(key, []);
+		groups.get(key).push(highlight);
+	}
+	return Array.from(groups.values());
 }
 
 async function openHighlight(highlight) {
@@ -37,6 +69,26 @@ async function openHighlight(highlight) {
 	} catch (error) {
 		console.error("[Highlight] could not open source highlight", error);
 		statusElement.textContent = "Could not open source highlight";
+	}
+}
+
+async function updateHighlight(highlightId, update) {
+	const stored = await chrome.storage.local.get(STORAGE_KEY);
+	const storedHighlights = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
+	let changed = false;
+	const nextHighlights = storedHighlights.map(highlight => {
+		if (highlight.id !== highlightId) return highlight;
+		changed = true;
+		return { ...highlight, ...update(highlight) };
+	});
+	if (changed) await chrome.storage.local.set({ [STORAGE_KEY]: nextHighlights });
+	return changed;
+}
+
+async function toggleStarred(highlight) {
+	const starred = highlight.starred !== true;
+	if (await updateHighlight(highlight.id, () => ({ starred }))) {
+		statusElement.textContent = starred ? "Highlight starred" : "Highlight unstarred";
 	}
 }
 
@@ -65,7 +117,18 @@ function createHighlightCard(highlight) {
 
 	const metadata = document.createElement("span");
 	metadata.className = "metadata";
-	metadata.textContent = getConversationLabel(highlight);
+	metadata.textContent = formatDate(highlight.createdAt);
+
+	const actions = document.createElement("div");
+	actions.className = "card-actions";
+
+	const starButton = document.createElement("button");
+	starButton.className = "star-button";
+	starButton.type = "button";
+	starButton.textContent = highlight.starred === true ? "★" : "☆";
+	starButton.setAttribute("aria-label", highlight.starred === true ? "Remove from starred" : "Add to starred");
+	starButton.setAttribute("aria-pressed", String(highlight.starred === true));
+	starButton.addEventListener("click", () => toggleStarred(highlight));
 
 	const deleteButton = document.createElement("button");
 	deleteButton.className = "delete-button";
@@ -74,19 +137,48 @@ function createHighlightCard(highlight) {
 	deleteButton.setAttribute("aria-label", `Delete highlight: ${highlight.exactText || "Untitled highlight"}`);
 	deleteButton.addEventListener("click", () => deleteHighlight(highlight.id));
 
-	footer.append(metadata, deleteButton);
+	actions.append(starButton, deleteButton);
+	footer.append(metadata, actions);
 	item.append(link, footer);
 	return item;
 }
 
-function render() {
-	const sortedHighlights = [...highlights].sort((left, right) =>
-		String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
-	);
+function createConversationGroup(group, index) {
+	const section = document.createElement("section");
+	section.className = "conversation-group";
 
-	countElement.textContent = String(sortedHighlights.length);
-	emptyStateElement.hidden = sortedHighlights.length !== 0;
-	listElement.replaceChildren(...sortedHighlights.map(createHighlightCard));
+	const header = document.createElement("header");
+	header.className = "group-header";
+	const title = document.createElement("h2");
+	title.textContent = `Conversation ${index + 1}`;
+	const count = document.createElement("span");
+	count.className = "group-count";
+	count.textContent = `${group.length} ${group.length === 1 ? "highlight" : "highlights"}`;
+	header.append(title, count);
+
+	const items = document.createElement("ul");
+	items.className = "group-items";
+	items.append(...group.map(createHighlightCard));
+	section.append(header, items);
+	return section;
+}
+
+function render() {
+	const visibleHighlights = getVisibleHighlights();
+	const groups = groupHighlights(visibleHighlights);
+	const filtersActive = Boolean(searchQuery) || starredOnly;
+
+	countElement.textContent = filtersActive
+		? `${visibleHighlights.length}/${highlights.length}`
+		: String(highlights.length);
+	emptyStateElement.hidden = visibleHighlights.length !== 0;
+	if (visibleHighlights.length === 0) {
+		emptyTitleElement.textContent = filtersActive ? "No matching highlights" : "No highlights yet";
+		emptyDescriptionElement.textContent = filtersActive
+			? "Try another search or clear the starred filter."
+			: "Select text in a ChatGPT conversation, then choose Highlight from the context menu.";
+	}
+	listElement.replaceChildren(...groups.map(createConversationGroup));
 }
 
 async function deleteHighlight(highlightId) {
@@ -104,6 +196,18 @@ async function initialize() {
 	highlights = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
 	render();
 }
+
+searchInputElement.addEventListener("input", event => {
+	searchQuery = event.target.value.trim().toLocaleLowerCase();
+	render();
+});
+
+starredFilterElement.addEventListener("click", () => {
+	starredOnly = !starredOnly;
+	starredFilterElement.setAttribute("aria-pressed", String(starredOnly));
+	starredFilterElement.textContent = starredOnly ? "★ Starred" : "☆ Starred";
+	render();
+});
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
 	if (areaName !== "local" || !changes[STORAGE_KEY]) return;

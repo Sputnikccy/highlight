@@ -2,7 +2,13 @@
 
 A Manifest V3 Chrome extension for persistent text highlights in ChatGPT conversations.
 
-## V0.2 in development
+## V0.3 in development
+
+- Search saved highlight text and existing tags.
+- Star important highlights and filter the library to starred items.
+- Group highlights by their source conversation.
+
+## V0.2
 
 - Open the Highlight Library from the extension toolbar icon.
 - Browse all saved highlights in a persistent Chrome side panel.
@@ -45,4 +51,5 @@ extension/
 - V0.1 supports `chatgpt.com` and the legacy `chat.openai.com` host only.
 - Restoration depends on ChatGPT message text and structure remaining sufficiently similar.
 - Ambiguous selections that match more than one saved highlight are not removed automatically.
-- The V0.2 library does not yet include search, tag editing, starring, cloud sync, or export.
+- Conversation groups use generic names because saved highlights do not yet include conversation titles.
+- The library does not yet include tag editing, notes, cloud sync, or export.

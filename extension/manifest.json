@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Highlight",
-  "version": "0.2.0",
-  "description": "Create and manage persistent highlights in ChatGPT conversations.",
+  "version": "0.3.0",
+  "description": "Save, find, and organize highlights from ChatGPT conversations.",
   "permissions": ["contextMenus", "sidePanel", "storage"],
   "action": {
     "default_title": "Open Highlight Library"
