@@ -4,8 +4,15 @@ const CHATGPT_URL_PATTERNS = [
 	"https://chat.openai.com/*",
 ];
 const menuModes = new Map();
+const pendingHighlightNavigation = new Map();
 let contextMenuRegistered = false;
 let contextMenuRegistrationInProgress = false;
+
+function enableSidePanel() {
+	chrome.sidePanel
+		.setPanelBehavior({ openPanelOnActionClick: true })
+		.catch(error => console.error("[Highlight] side panel setup failed", error));
+}
 
 function ensureContextMenu() {
 	if (contextMenuRegistered || contextMenuRegistrationInProgress) return;
@@ -99,9 +106,74 @@ function handleContextModeChanged(message, sender, sendResponse) {
 	sendResponse({ ok: true });
 }
 
+function deliverHighlightNavigation(tabId) {
+	const pending = pendingHighlightNavigation.get(tabId);
+	if (!pending) return;
+
+	chrome.tabs.sendMessage(tabId, {
+		type: "SCROLL_TO_HIGHLIGHT",
+		highlightId: pending.highlightId,
+	}, response => {
+		if (!chrome.runtime.lastError && response?.ok) {
+			pendingHighlightNavigation.delete(tabId);
+			return;
+		}
+
+		pending.attempts += 1;
+		if (pending.attempts < 20) {
+			setTimeout(() => deliverHighlightNavigation(tabId), 250);
+		} else {
+			pendingHighlightNavigation.delete(tabId);
+			console.error("[Highlight] could not connect to source conversation");
+		}
+	});
+}
+
+function handleOpenHighlight(message, sender, sendResponse) {
+	if (
+		message?.type !== "OPEN_HIGHLIGHT" ||
+		typeof message.highlightId !== "string" ||
+		typeof message.url !== "string"
+	) {
+		return;
+	}
+
+	let sourceUrl;
+	try {
+		sourceUrl = new URL(message.url);
+		sourceUrl.hash = `highlight=${encodeURIComponent(message.highlightId)}`;
+	} catch {
+		sendResponse({ ok: false, error: "INVALID_HIGHLIGHT_URL" });
+		return;
+	}
+
+	chrome.tabs.create({ url: sourceUrl.href, active: true }, tab => {
+		if (chrome.runtime.lastError || tab?.id === undefined) {
+			sendResponse({
+				ok: false,
+				error: chrome.runtime.lastError?.message || "TAB_CREATE_FAILED",
+			});
+			return;
+		}
+
+		pendingHighlightNavigation.set(tab.id, {
+			highlightId: message.highlightId,
+			attempts: 0,
+		});
+		sendResponse({ ok: true });
+	});
+	return true;
+}
+
 chrome.contextMenus.onClicked.addListener(handleContextMenuClick);
 chrome.runtime.onMessage.addListener(handleContextModeChanged);
+chrome.runtime.onMessage.addListener(handleOpenHighlight);
 chrome.runtime.onInstalled.addListener(ensureContextMenu);
 chrome.runtime.onStartup.addListener(ensureContextMenu);
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+	if (changeInfo.status === "complete") deliverHighlightNavigation(tabId);
+});
+chrome.tabs.onRemoved.addListener(tabId => pendingHighlightNavigation.delete(tabId));
 
 ensureContextMenu();
+enableSidePanel();

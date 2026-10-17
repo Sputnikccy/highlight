@@ -2,6 +2,13 @@
 
 A Manifest V3 Chrome extension for persistent text highlights in ChatGPT conversations.
 
+## V0.2 in development
+
+- Open the Highlight Library from the extension toolbar icon.
+- Browse all saved highlights in a persistent Chrome side panel.
+- Open the source conversation and scroll to the saved text, or delete a highlight from the library.
+- Keep the library and visible ChatGPT highlights synchronized through `chrome.storage.local`.
+
 ## V0.1
 
 - Select text in a ChatGPT message and use **Highlight** from the context menu.
@@ -26,7 +33,10 @@ Saved highlights use the selected text, nearby prefix and suffix context, charac
 extension/
 ├── background.js  # Context-menu registration and command routing
 ├── content.js     # Selection capture, persistence, restoration, and removal
-├── manifest.json  # Manifest V3 configuration (version 0.1.0)
+├── manifest.json  # Manifest V3 configuration
+├── sidepanel.css  # Library presentation
+├── sidepanel.html # Highlight Library structure
+├── sidepanel.js   # Library data and interactions
 └── styles.css     # Highlight and toast presentation
 ```
 
@@ -35,4 +45,4 @@ extension/
 - V0.1 supports `chatgpt.com` and the legacy `chat.openai.com` host only.
 - Restoration depends on ChatGPT message text and structure remaining sufficiently similar.
 - Ambiguous selections that match more than one saved highlight are not removed automatically.
-- There is no library UI, search, tagging workflow, sync, or export yet.
+- The V0.2 library does not yet include search, tag editing, starring, cloud sync, or export.
