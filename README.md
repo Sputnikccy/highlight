@@ -2,7 +2,15 @@
 
 A Manifest V3 Chrome extension for persistent text highlights in ChatGPT conversations.
 
-## V0.3 in development
+## V0.4 in development
+
+- Save the real ChatGPT conversation title with new highlights and backfill older highlights when their source conversation is revisited.
+- Collapse and expand conversation groups in the Highlight Library.
+- Add a short note to each highlight and include notes and conversation titles in search.
+- Export the complete local library as Markdown or JSON.
+- Load earlier parts of long conversations in progressive stages, center the exact saved range, and keep each continuation prompt visible until the user chooses the next search strategy or dismisses it.
+
+## V0.3
 
 - Search saved highlight text and existing tags.
 - Star important highlights and filter the library to starred items.
@@ -51,5 +59,7 @@ extension/
 - V0.1 supports `chatgpt.com` and the legacy `chat.openai.com` host only.
 - Restoration depends on ChatGPT message text and structure remaining sufficiently similar.
 - Ambiguous selections that match more than one saved highlight are not removed automatically.
-- Conversation groups use generic names because saved highlights do not yet include conversation titles.
-- The library does not yet include tag editing, notes, cloud sync, or export.
+- Conversation groups fall back to generic names when no saved conversation title is available.
+- Existing highlights receive their conversation title only after the source conversation is revisited.
+- The library does not yet include tag editing, cloud sync, or automatic cross-device synchronization.
+- Restoration can still fail if ChatGPT changes or removes the saved text; progressive search cannot recover content that no longer exists in the page.

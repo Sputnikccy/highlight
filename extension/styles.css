@@ -33,3 +33,16 @@
 .highlight-extension-toast button:hover {
 	background: rgba(255, 255, 255, 0.12);
 }
+
+.highlight-extension-toast-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.highlight-extension-toast .highlight-extension-toast-dismiss {
+	padding-inline: 7px;
+	color: rgba(255, 255, 255, 0.72);
+	font-size: 18px;
+	line-height: 1;
+}
