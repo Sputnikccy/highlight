@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Highlight Library</title>
+		<link rel="stylesheet" href="sidepanel.css">
+	</head>
+	<body>
+		<header class="library-header">
+			<div>
+				<p class="eyebrow">Highlight</p>
+				<h1>Library</h1>
+			</div>
+			<span id="highlight-count" class="count" aria-live="polite"></span>
+		</header>
+
+		<main>
+			<section id="empty-state" class="empty-state" hidden>
+				<div class="empty-icon" aria-hidden="true">✦</div>
+				<h2>No highlights yet</h2>
+				<p>Select text in a ChatGPT conversation, then choose <strong>Highlight</strong> from the context menu.</p>
+			</section>
+
+			<ul id="highlight-list" class="highlight-list" aria-label="Saved highlights"></ul>
+		</main>
+
+		<p id="status" class="visually-hidden" role="status" aria-live="polite"></p>
+		<script src="sidepanel.js"></script>
+	</body>
+</html>

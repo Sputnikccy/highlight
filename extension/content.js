@@ -18,6 +18,9 @@ let unavailableApiLogged = false;
 let toastElement = null;
 let toastTimer = null;
 let toastHighlightId = null;
+let pendingScrollHighlightId = null;
+let scrollAttemptCount = 0;
+let scrollRetryTimer = null;
 
 function elementFor(node) {
 	return node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
@@ -521,7 +524,10 @@ document.addEventListener("click", event => {
 function restoreHighlights() {
 	refreshActiveHighlights();
 	const unresolved = activeHighlights.filter(anchor => !resolvedRanges.has(anchor.id));
-	if (unresolved.length === 0) return;
+	if (unresolved.length === 0) {
+		tryScrollToPendingHighlight();
+		return;
+	}
 
 	const messageRoots = getMessageRoots();
 	let changed = false;
@@ -535,6 +541,51 @@ function restoreHighlights() {
 	}
 
 	if (changed) renderHighlights();
+	tryScrollToPendingHighlight();
+}
+
+function tryScrollToPendingHighlight() {
+	if (!pendingScrollHighlightId) return false;
+	const range = resolvedRanges.get(pendingScrollHighlightId);
+	if (!range?.startContainer.isConnected) return false;
+
+	const target = elementFor(range.startContainer);
+	if (!target) return false;
+	target.scrollIntoView({
+		behavior: scrollAttemptCount === 0 ? "smooth" : "auto",
+		block: "center",
+		inline: "nearest",
+	});
+	scrollAttemptCount += 1;
+	clearTimeout(scrollRetryTimer);
+	if (scrollAttemptCount < 8) {
+		scrollRetryTimer = setTimeout(() => {
+			removeDisconnectedRanges();
+			restoreHighlights();
+		}, 400);
+	} else {
+		pendingScrollHighlightId = null;
+		scrollAttemptCount = 0;
+		const url = new URL(window.location.href);
+		if (url.hash.startsWith("#highlight=")) {
+			url.hash = "";
+			history.replaceState(history.state, "", url.href);
+		}
+	}
+	return true;
+}
+
+function setPendingScrollHighlight(highlightId) {
+	clearTimeout(scrollRetryTimer);
+	pendingScrollHighlightId = highlightId;
+	scrollAttemptCount = 0;
+}
+
+function getHighlightIdFromUrl() {
+	const hash = window.location.hash.slice(1);
+	if (!hash.startsWith("highlight=")) return null;
+	const highlightId = decodeURIComponent(hash.slice("highlight=".length));
+	return highlightId || null;
 }
 
 function scheduleRestore() {
@@ -683,6 +734,22 @@ async function initialize() {
 	startRestoreObserver();
 	const stored = await chrome.storage.local.get(STORAGE_KEY);
 	allHighlights = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
+	const navigationHighlightId = getHighlightIdFromUrl();
+	if (navigationHighlightId) setPendingScrollHighlight(navigationHighlightId);
+	restoreHighlights();
+}
+
+function handleStorageChanged(changes, areaName) {
+	if (areaName !== "local" || !changes[STORAGE_KEY]) return;
+
+	const nextHighlights = changes[STORAGE_KEY].newValue;
+	allHighlights = Array.isArray(nextHighlights) ? nextHighlights : [];
+	activeHighlights = allHighlights.filter(belongsToCurrentPage);
+	const activeIds = new Set(activeHighlights.map(highlight => highlight.id));
+	for (const highlightId of resolvedRanges.keys()) {
+		if (!activeIds.has(highlightId)) resolvedRanges.delete(highlightId);
+	}
+	renderHighlights();
 	restoreHighlights();
 }
 
@@ -690,7 +757,25 @@ document.addEventListener("selectionchange", capturePendingSelection);
 document.addEventListener("mousedown", capturePendingSelection, true);
 document.addEventListener("mouseup", capturePendingSelection, true);
 document.addEventListener("contextmenu", capturePendingSelection, true);
+chrome.storage.onChanged.addListener(handleStorageChanged);
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+	if (message?.type === "SCROLL_TO_HIGHLIGHT" && typeof message.highlightId === "string") {
+		setPendingScrollHighlight(message.highlightId);
+		Promise.resolve(initializationPromise)
+			.then(() => {
+				restoreHighlights();
+				sendResponse({
+					ok: true,
+					status: pendingScrollHighlightId ? "pending" : "located",
+				});
+			})
+			.catch(error => {
+				console.error("[Highlight] navigation failed", error);
+				sendResponse({ ok: false, error: error.message || "HIGHLIGHT_NAVIGATION_FAILED" });
+			});
+		return true;
+	}
+
 	if (message?.type !== "HIGHLIGHT_SELECTION" && message?.type !== "REMOVE_HIGHLIGHT") return;
 
 	const command = message.type === "HIGHLIGHT_SELECTION"
