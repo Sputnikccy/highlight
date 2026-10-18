@@ -17,7 +17,18 @@ const emptyTitleElement = document.querySelector("#empty-title");
 const emptyDescriptionElement = document.querySelector("#empty-description");
 const listElement = document.querySelector("#highlight-list");
 const searchInputElement = document.querySelector("#search-input");
-const starredFilterElement = document.querySelector("#starred-filter");
+const selectModeElement = document.querySelector("#select-mode");
+const viewFilterElement = document.querySelector("#view-filter");
+const sortOrderElement = document.querySelector("#sort-order");
+const bulkToolbarElement = document.querySelector("#bulk-toolbar");
+const selectionCountElement = document.querySelector("#selection-count");
+const selectAllElement = document.querySelector("#select-all");
+const bulkStarElement = document.querySelector("#bulk-star");
+const bulkTagElement = document.querySelector("#bulk-tag");
+const bulkDeleteElement = document.querySelector("#bulk-delete");
+const bulkTagEditorElement = document.querySelector("#bulk-tag-editor");
+const bulkTagInputElement = document.querySelector("#bulk-tag-input");
+const bulkTagCancelElement = document.querySelector("#bulk-tag-cancel");
 const dataMenuElement = document.querySelector("#data-menu");
 const importButtonElement = document.querySelector("#import-json");
 const importFileElement = document.querySelector("#import-file");
@@ -30,8 +41,12 @@ const statusElement = document.querySelector("#status");
 
 let highlights = [];
 let searchQuery = "";
-let starredOnly = false;
+let selectedView = "all";
+let sortOrder = "newest";
 let selectedTag = "";
+let selectionMode = false;
+let bulkActionPending = false;
+const selectedHighlightIds = new Set();
 const collapsedGroups = new Set();
 
 function normalizeTag(value) {
@@ -320,13 +335,29 @@ function matchesSearch(highlight) {
 	return searchableText.includes(searchQuery);
 }
 
+function matchesSelectedView(highlight) {
+	switch (selectedView) {
+		case "starred":
+			return highlight.starred === true;
+		case "notes":
+			return Boolean(highlight.note?.trim());
+		case "untagged":
+			return getHighlightTags(highlight).length === 0;
+		default:
+			return true;
+	}
+}
+
 function getVisibleHighlights() {
 	return highlights
 		.filter(highlight => {
 			const matchesTag = !selectedTag || getHighlightTags(highlight).some(tag => getTagKey(tag) === selectedTag);
-			return (!starredOnly || highlight.starred === true) && matchesTag && matchesSearch(highlight);
+			return matchesSelectedView(highlight) && matchesTag && matchesSearch(highlight);
 		})
-		.sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+		.sort((left, right) => {
+			const comparison = String(left.createdAt || "").localeCompare(String(right.createdAt || ""));
+			return sortOrder === "oldest" ? comparison : -comparison;
+		});
 }
 
 function renderTagFilters(allTags) {
@@ -402,6 +433,117 @@ async function toggleStarred(highlight) {
 	} catch (error) {
 		console.error("[Highlight] could not update starred state", error);
 		statusElement.textContent = "Could not update highlight";
+	}
+}
+
+function getSelectedHighlights() {
+	return highlights.filter(highlight => selectedHighlightIds.has(highlight.id));
+}
+
+function setSelectionMode(active) {
+	selectionMode = active;
+	selectedHighlightIds.clear();
+	bulkTagEditorElement.hidden = true;
+	bulkTagInputElement.value = "";
+	render();
+}
+
+function toggleHighlightSelection(highlightId) {
+	if (selectedHighlightIds.has(highlightId)) selectedHighlightIds.delete(highlightId);
+	else selectedHighlightIds.add(highlightId);
+	bulkTagEditorElement.hidden = true;
+	render();
+}
+
+async function updateHighlightsByIds(highlightIds, update) {
+	const ids = new Set(highlightIds);
+	if (ids.size === 0) return false;
+	const stored = await chrome.storage.local.get(STORAGE_KEY);
+	const storedHighlights = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
+	let changed = false;
+	const nextHighlights = storedHighlights.map(highlight => {
+		if (!ids.has(highlight.id)) return highlight;
+		changed = true;
+		return { ...highlight, ...update(highlight) };
+	});
+	if (changed) await chrome.storage.local.set({ [STORAGE_KEY]: nextHighlights });
+	return changed;
+}
+
+async function toggleBulkStarred() {
+	const selected = getSelectedHighlights();
+	if (selected.length === 0 || bulkActionPending) return;
+	const starred = !selected.every(highlight => highlight.starred === true);
+	bulkActionPending = true;
+	render();
+	try {
+		await updateHighlightsByIds(selected.map(highlight => highlight.id), () => ({ starred }));
+		statusElement.textContent = `${selected.length} highlight${selected.length === 1 ? "" : "s"} ${starred ? "starred" : "unstarred"}`;
+	} catch (error) {
+		console.error("[Highlight] could not update selected highlights", error);
+		statusElement.textContent = "Could not update selected highlights";
+	} finally {
+		bulkActionPending = false;
+		render();
+	}
+}
+
+function mergeHighlightTags(highlight, additions) {
+	const tags = getHighlightTags(highlight);
+	const seen = new Set(tags.map(getTagKey));
+	for (const tag of additions) {
+		const key = getTagKey(tag);
+		if (seen.has(key)) continue;
+		if (tags.length >= TAG_MAX_COUNT) {
+			throw new Error(`Some selected highlights would exceed ${TAG_MAX_COUNT} tags`);
+		}
+		seen.add(key);
+		tags.push(tag);
+	}
+	return tags;
+}
+
+async function addBulkTags(value) {
+	const additions = parseTags(value);
+	if (additions.length === 0) throw new Error("Enter at least one tag");
+	const selected = getSelectedHighlights();
+	if (selected.length === 0) return;
+	for (const highlight of selected) mergeHighlightTags(highlight, additions);
+	await updateHighlightsByIds(
+		selected.map(highlight => highlight.id),
+		highlight => ({ tags: mergeHighlightTags(highlight, additions) }),
+	);
+	statusElement.textContent = `Tags added to ${selected.length} highlight${selected.length === 1 ? "" : "s"}`;
+}
+
+async function deleteSelectedHighlights() {
+	const selected = getSelectedHighlights();
+	if (selected.length === 0 || bulkActionPending) return;
+	const confirmed = window.confirm(
+		`Delete ${selected.length} selected highlight${selected.length === 1 ? "" : "s"}? This cannot be undone.`,
+	);
+	if (!confirmed) return;
+
+	bulkActionPending = true;
+	render();
+	try {
+		const ids = new Set(selected.map(highlight => highlight.id));
+		const stored = await chrome.storage.local.get(STORAGE_KEY);
+		const storedHighlights = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
+		const nextHighlights = storedHighlights.filter(highlight => !ids.has(highlight.id));
+		if (nextHighlights.length !== storedHighlights.length) {
+			await chrome.storage.local.set({ [STORAGE_KEY]: nextHighlights });
+		}
+		selectionMode = false;
+		selectedHighlightIds.clear();
+		bulkTagEditorElement.hidden = true;
+		statusElement.textContent = `${selected.length} highlight${selected.length === 1 ? "" : "s"} deleted`;
+	} catch (error) {
+		console.error("[Highlight] could not delete selected highlights", error);
+		statusElement.textContent = "Could not delete selected highlights";
+	} finally {
+		bulkActionPending = false;
+		render();
 	}
 }
 
@@ -599,12 +741,25 @@ function appendContextText(element, text, exactText = "") {
 	element.append(mark, document.createTextNode(presentation.text.slice(end)));
 }
 
+function createSavedContextExcerpt(highlight) {
+	const prefix = typeof highlight.prefix === "string" ? highlight.prefix : "";
+	const exactText = typeof highlight.exactText === "string" ? highlight.exactText : "";
+	const suffix = typeof highlight.suffix === "string" ? highlight.suffix : "";
+	const excerpt = `${prefix}${exactText}${suffix}`.replace(/\s+/g, " ").trim();
+	if (!excerpt) return "";
+	return `${prefix ? "…" : ""}${excerpt}${suffix ? "…" : ""}`;
+}
+
 function createContextDetails(highlight) {
-	const messageContext = typeof highlight.messageContext === "string" ? highlight.messageContext.trim() : "";
+	const storedMessageContext = typeof highlight.messageContext === "string" ? highlight.messageContext.trim() : "";
+	const savedContextExcerpt = storedMessageContext ? "" : createSavedContextExcerpt(highlight);
+	const messageContext = storedMessageContext || savedContextExcerpt;
 	const questionContext = typeof highlight.questionContext === "string" ? highlight.questionContext.trim() : "";
 	if (!messageContext && !questionContext) return null;
 
-	const roleLabel = highlight.messageRole === "assistant"
+	const roleLabel = savedContextExcerpt
+		? "Saved excerpt"
+		: highlight.messageRole === "assistant"
 		? "Assistant"
 		: highlight.messageRole === "user"
 			? "You"
@@ -633,7 +788,13 @@ function createContextDetails(highlight) {
 
 	appendContext("Your question", questionContext);
 	appendContext(
-		highlight.messageRole === "assistant" ? "Assistant response" : highlight.messageRole === "user" ? "Your message" : "Message",
+		savedContextExcerpt
+			? "Saved excerpt"
+			: highlight.messageRole === "assistant"
+				? "Assistant response"
+				: highlight.messageRole === "user"
+					? "Your message"
+					: "Message",
 		messageContext,
 		highlight.exactText,
 	);
@@ -644,6 +805,19 @@ function createContextDetails(highlight) {
 function createHighlightCard(highlight) {
 	const item = document.createElement("li");
 	item.className = "highlight-card";
+	if (selectionMode) {
+		const selected = selectedHighlightIds.has(highlight.id);
+		item.classList.add("has-selector");
+		item.classList.toggle("is-selected", selected);
+		const selector = document.createElement("button");
+		selector.className = "card-selector";
+		selector.type = "button";
+		selector.textContent = selected ? "✓" : "";
+		selector.setAttribute("aria-label", `${selected ? "Deselect" : "Select"} highlight: ${highlight.exactText || "Untitled highlight"}`);
+		selector.setAttribute("aria-pressed", String(selected));
+		selector.addEventListener("click", () => toggleHighlightSelection(highlight.id));
+		item.append(selector);
+	}
 
 	const link = document.createElement("a");
 	link.className = "highlight-link";
@@ -790,8 +964,27 @@ function render() {
 	if (selectedTag && !allTags.some(tag => tag.key === selectedTag)) selectedTag = "";
 	renderTagFilters(allTags);
 	const visibleHighlights = getVisibleHighlights();
+	const visibleIds = new Set(visibleHighlights.map(highlight => highlight.id));
+	for (const highlightId of selectedHighlightIds) {
+		if (!visibleIds.has(highlightId)) selectedHighlightIds.delete(highlightId);
+	}
 	const groups = groupHighlights(visibleHighlights);
-	const filtersActive = Boolean(searchQuery) || starredOnly || Boolean(selectedTag);
+	const filtersActive = Boolean(searchQuery) || selectedView !== "all" || Boolean(selectedTag);
+	const selected = getSelectedHighlights();
+	const allVisibleSelected = visibleHighlights.length > 0 && visibleHighlights.every(highlight => selectedHighlightIds.has(highlight.id));
+	const allSelectedStarred = selected.length > 0 && selected.every(highlight => highlight.starred === true);
+
+	selectModeElement.setAttribute("aria-pressed", String(selectionMode));
+	selectModeElement.textContent = selectionMode ? "Done" : "Select";
+	bulkToolbarElement.hidden = !selectionMode;
+	selectionCountElement.textContent = `${selected.length} selected`;
+	selectAllElement.textContent = allVisibleSelected ? "Clear selection" : "Select all results";
+	selectAllElement.disabled = bulkActionPending || visibleHighlights.length === 0;
+	bulkStarElement.textContent = allSelectedStarred ? "☆ Unstar" : "★ Star";
+	for (const button of [bulkStarElement, bulkTagElement, bulkDeleteElement]) {
+		button.disabled = bulkActionPending || selected.length === 0;
+	}
+	if (selected.length === 0) bulkTagEditorElement.hidden = true;
 
 	countElement.textContent = filtersActive
 		? `${visibleHighlights.length}/${highlights.length}`
@@ -881,11 +1074,64 @@ searchInputElement.addEventListener("input", event => {
 	render();
 });
 
-starredFilterElement.addEventListener("click", () => {
-	starredOnly = !starredOnly;
-	starredFilterElement.setAttribute("aria-pressed", String(starredOnly));
-	starredFilterElement.textContent = starredOnly ? "★ Starred" : "☆ Starred";
+viewFilterElement.addEventListener("change", event => {
+	selectedView = event.target.value;
 	render();
+});
+
+sortOrderElement.addEventListener("change", event => {
+	sortOrder = event.target.value;
+	render();
+});
+
+selectModeElement.addEventListener("click", () => setSelectionMode(!selectionMode));
+
+selectAllElement.addEventListener("click", () => {
+	const visibleHighlights = getVisibleHighlights();
+	const allSelected = visibleHighlights.length > 0 && visibleHighlights.every(highlight => selectedHighlightIds.has(highlight.id));
+	for (const highlight of visibleHighlights) {
+		if (allSelected) selectedHighlightIds.delete(highlight.id);
+		else selectedHighlightIds.add(highlight.id);
+	}
+	bulkTagEditorElement.hidden = true;
+	render();
+});
+
+bulkStarElement.addEventListener("click", toggleBulkStarred);
+bulkDeleteElement.addEventListener("click", deleteSelectedHighlights);
+
+bulkTagElement.addEventListener("click", () => {
+	bulkTagEditorElement.hidden = !bulkTagEditorElement.hidden;
+	if (!bulkTagEditorElement.hidden) bulkTagInputElement.focus();
+});
+
+bulkTagCancelElement.addEventListener("click", () => {
+	bulkTagEditorElement.hidden = true;
+	bulkTagInputElement.value = "";
+	bulkTagInputElement.setCustomValidity("");
+});
+
+bulkTagInputElement.addEventListener("input", () => bulkTagInputElement.setCustomValidity(""));
+
+bulkTagEditorElement.addEventListener("submit", async event => {
+	event.preventDefault();
+	if (bulkActionPending) return;
+	bulkActionPending = true;
+	const submitButton = bulkTagEditorElement.querySelector('[type="submit"]');
+	submitButton.disabled = true;
+	try {
+		await addBulkTags(bulkTagInputElement.value);
+		bulkTagEditorElement.hidden = true;
+		bulkTagInputElement.value = "";
+		bulkTagInputElement.setCustomValidity("");
+	} catch (error) {
+		bulkTagInputElement.setCustomValidity(error.message);
+		bulkTagInputElement.reportValidity();
+	} finally {
+		bulkActionPending = false;
+		submitButton.disabled = false;
+		render();
+	}
 });
 
 document.querySelectorAll("[data-export-format]").forEach(button => {

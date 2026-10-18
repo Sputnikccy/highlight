@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Highlight",
-  "version": "0.7.0",
-  "description": "Save, organize, and revisit context-rich highlights from ChatGPT conversations.",
+  "version": "0.8.0",
+  "description": "Save, organize, and revisit context-rich highlights with smart views and bulk actions.",
   "permissions": ["contextMenus", "sidePanel", "storage"],
   "action": {
     "default_title": "Open Highlight Library"

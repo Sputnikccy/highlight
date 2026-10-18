@@ -2,12 +2,19 @@
 
 A Manifest V3 Chrome extension for persistent text highlights in ChatGPT conversations.
 
-## V0.7 in development
+## V0.8 in development
+
+- Switch between all highlights, starred highlights, highlights with notes, and untagged highlights.
+- Sort the Library from newest or oldest saved highlight.
+- Enter a dedicated selection mode without adding clutter to normal browsing.
+- Select every result in the current search and filter view, then bulk star, unstar, tag, or safely delete highlights.
+
+## V0.7
 
 - Save whether a highlight came from the user or the assistant.
 - Store a compact excerpt of the source message and associate assistant highlights with the preceding user question.
 - Expand a focused context excerpt inside Library cards, mark the selected words in yellow, and include the full context in search and Markdown exports.
-- Backfill context for older highlights when their source conversation is revisited and restored.
+- Show the saved nearby text immediately for older highlights, then backfill full message context when their source conversation is revisited and restored.
 
 ## V0.6
 
@@ -80,7 +87,7 @@ extension/
 - Ambiguous selections that match more than one saved highlight are not removed automatically.
 - Conversation groups fall back to generic names when no saved conversation title is available.
 - Existing highlights receive their conversation title only after the source conversation is revisited.
-- Existing highlights receive message context only after their source text is restored on a revisited conversation.
+- Existing highlights show their saved nearby excerpt immediately, but receive full message context and role details only after their source text is restored on a revisited conversation.
 - Question association depends on ChatGPT continuing to expose user and assistant message roles in the page.
 - The library does not yet include cloud sync or automatic cross-device synchronization.
 - Moving highlights between browsers or devices still requires manual JSON export and import.
