@@ -2,7 +2,14 @@
 
 A Manifest V3 Chrome extension for persistent text highlights in ChatGPT conversations.
 
-## V0.8 in development
+## V0.9 in development
+
+- Render large libraries in batches of 50 while search, filters, and bulk selection still cover every matching result.
+- Load additional result batches without losing the current view, sort order, or selected highlights.
+- Repair saved offsets, nearby text, message locators, and context after a highlight is successfully restored.
+- Show persistent Library error messages when storage-backed actions fail.
+
+## V0.8
 
 - Switch between all highlights, starred highlights, highlights with notes, and untagged highlights.
 - Sort the Library from newest or oldest saved highlight.

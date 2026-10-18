@@ -6,7 +6,7 @@ const MESSAGE_CONTEXT_LENGTH = 700;
 const QUESTION_CONTEXT_LENGTH = 500;
 const RESTORE_DEBOUNCE_MS = 120;
 const TITLE_SYNC_DEBOUNCE_MS = 500;
-const CONTEXT_SYNC_DEBOUNCE_MS = 600;
+const RESOLVED_HIGHLIGHT_SYNC_DEBOUNCE_MS = 600;
 const NAVIGATION_SEARCH_INTERVAL_MS = 450;
 const NAVIGATION_STAGES = [
 	{ timeoutMs: 20000, maxAttempts: 36 },
@@ -38,7 +38,7 @@ let navigationSearchTimer = null;
 let navigationSearchAttempt = 0;
 let navigationStage = 0;
 let titleSyncTimer = null;
-let contextSyncTimer = null;
+let resolvedHighlightSyncTimer = null;
 
 function elementFor(node) {
 	return node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
@@ -307,39 +307,83 @@ function scheduleConversationTitleSync() {
 	}, TITLE_SYNC_DEBOUNCE_MS);
 }
 
-async function syncResolvedHighlightContext() {
-	const contextUpdates = new Map();
+function buildResolvedHighlightUpdate(highlight, range) {
+	const messageRoot = findMessageRoot(range);
+	if (!messageRoot) return null;
+	const exactText = range.toString();
+	if (normalizeComparableText(exactText) !== normalizeComparableText(highlight.exactText)) return null;
+
+	const messageText = messageRoot.textContent || "";
+	const startOffset = getTextOffset(messageRoot, range.startContainer, range.startOffset);
+	const endOffset = getTextOffset(messageRoot, range.endContainer, range.endOffset);
+	if (startOffset < 0 || endOffset < startOffset) return null;
+	const context = buildHighlightContext(range, messageRoot) || {};
+	if (!context.messageRole && highlight.messageRole) context.messageRole = highlight.messageRole;
+	if (!context.questionContext && highlight.questionContext) context.questionContext = highlight.questionContext;
+
+	return {
+		exactText,
+		prefix: messageText.slice(Math.max(0, startOffset - CONTEXT_LENGTH), startOffset),
+		suffix: messageText.slice(endOffset, endOffset + CONTEXT_LENGTH),
+		startOffset,
+		endOffset,
+		messageLocator: getMessageLocator(messageRoot),
+		...context,
+	};
+}
+
+function resolvedHighlightNeedsUpdate(highlight, update) {
+	for (const field of [
+		"exactText",
+		"prefix",
+		"suffix",
+		"startOffset",
+		"endOffset",
+		"contextVersion",
+		"messageRole",
+		"messageContext",
+		"questionContext",
+	]) {
+		if (Object.prototype.hasOwnProperty.call(update, field) && highlight[field] !== update[field]) return true;
+	}
+	for (const field of ["tagName", "messageId", "testId", "authorRole", "id"]) {
+		if (highlight.messageLocator?.[field] !== update.messageLocator?.[field]) return true;
+	}
+	return false;
+}
+
+async function syncResolvedHighlightMetadata() {
+	const metadataUpdates = new Map();
 	for (const highlight of activeHighlights) {
-		if (highlight.contextVersion === CONTEXT_SCHEMA_VERSION) continue;
 		const range = resolvedRanges.get(highlight.id);
 		if (!range?.startContainer.isConnected || !range.endContainer.isConnected) continue;
-		const messageRoot = findMessageRoot(range);
-		if (!messageRoot) continue;
-		const context = buildHighlightContext(range, messageRoot);
-		if (context) contextUpdates.set(highlight.id, context);
+		const update = buildResolvedHighlightUpdate(highlight, range);
+		if (update && resolvedHighlightNeedsUpdate(highlight, update)) {
+			metadataUpdates.set(highlight.id, update);
+		}
 	}
-	if (contextUpdates.size === 0) return false;
+	if (metadataUpdates.size === 0) return false;
 
 	const stored = await chrome.storage.local.get(STORAGE_KEY);
 	const storedHighlights = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
 	let changed = false;
 	const nextHighlights = storedHighlights.map(highlight => {
-		const context = contextUpdates.get(highlight.id);
-		if (!context || highlight.contextVersion === CONTEXT_SCHEMA_VERSION) return highlight;
+		const update = metadataUpdates.get(highlight.id);
+		if (!update || !resolvedHighlightNeedsUpdate(highlight, update)) return highlight;
 		changed = true;
-		return { ...highlight, ...context };
+		return { ...highlight, ...update };
 	});
 	if (changed) await chrome.storage.local.set({ [STORAGE_KEY]: nextHighlights });
 	return changed;
 }
 
-function scheduleHighlightContextSync() {
-	clearTimeout(contextSyncTimer);
-	contextSyncTimer = setTimeout(() => {
-		syncResolvedHighlightContext().catch(error => {
-			console.warn("[Highlight] context sync failed", error);
+function scheduleResolvedHighlightSync() {
+	clearTimeout(resolvedHighlightSyncTimer);
+	resolvedHighlightSyncTimer = setTimeout(() => {
+		syncResolvedHighlightMetadata().catch(error => {
+			console.warn("[Highlight] resolved metadata sync failed", error);
 		});
-	}, CONTEXT_SYNC_DEBOUNCE_MS);
+	}, RESOLVED_HIGHLIGHT_SYNC_DEBOUNCE_MS);
 }
 
 function capturePendingSelection() {
@@ -801,7 +845,7 @@ function restoreHighlights() {
 	refreshActiveHighlights();
 	const unresolved = activeHighlights.filter(anchor => !resolvedRanges.has(anchor.id));
 	if (unresolved.length === 0) {
-		scheduleHighlightContextSync();
+		scheduleResolvedHighlightSync();
 		tryScrollToPendingHighlight();
 		return;
 	}
@@ -831,7 +875,7 @@ function restoreHighlights() {
 	}
 
 	if (changed) renderHighlights();
-	scheduleHighlightContextSync();
+	scheduleResolvedHighlightSync();
 	tryScrollToPendingHighlight();
 }
 
