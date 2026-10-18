@@ -1,5 +1,7 @@
 const STORAGE_KEY = "highlights";
 const NOTE_MAX_LENGTH = 500;
+const TAG_MAX_COUNT = 8;
+const TAG_MAX_LENGTH = 24;
 
 const countElement = document.querySelector("#highlight-count");
 const emptyStateElement = document.querySelector("#empty-state");
@@ -9,12 +11,69 @@ const listElement = document.querySelector("#highlight-list");
 const searchInputElement = document.querySelector("#search-input");
 const starredFilterElement = document.querySelector("#starred-filter");
 const exportMenuElement = document.querySelector("#export-menu");
+const tagFiltersElement = document.querySelector("#tag-filters");
+const tagFilterOptionsElement = document.querySelector("#tag-filter-options");
 const statusElement = document.querySelector("#status");
 
 let highlights = [];
 let searchQuery = "";
 let starredOnly = false;
+let selectedTag = "";
 const collapsedGroups = new Set();
+
+function normalizeTag(value) {
+	return String(value || "").replace(/\s+/g, " ").trim().replace(/^#+/, "").trim();
+}
+
+function getTagKey(value) {
+	return normalizeTag(value).toLocaleLowerCase();
+}
+
+function getHighlightTags(highlight) {
+	if (!Array.isArray(highlight.tags)) return [];
+	const tags = [];
+	const seen = new Set();
+	for (const value of highlight.tags) {
+		const tag = normalizeTag(value);
+		const key = getTagKey(tag);
+		if (!tag || seen.has(key)) continue;
+		seen.add(key);
+		tags.push(tag);
+	}
+	return tags;
+}
+
+function parseTags(value) {
+	const tags = [];
+	const seen = new Set();
+	for (const entry of String(value || "").split(/[,，\n]+/)) {
+		const tag = normalizeTag(entry);
+		if (!tag) continue;
+		if (tag.length > TAG_MAX_LENGTH) {
+			throw new Error(`Keep each tag under ${TAG_MAX_LENGTH} characters`);
+		}
+		const key = getTagKey(tag);
+		if (seen.has(key)) continue;
+		if (tags.length >= TAG_MAX_COUNT) {
+			throw new Error(`Use up to ${TAG_MAX_COUNT} tags per highlight`);
+		}
+		seen.add(key);
+		tags.push(tag);
+	}
+	return tags;
+}
+
+function getAllTags() {
+	const tagsByKey = new Map();
+	for (const highlight of highlights) {
+		for (const tag of getHighlightTags(highlight)) {
+			const key = getTagKey(tag);
+			if (!tagsByKey.has(key)) tagsByKey.set(key, tag);
+		}
+	}
+	return Array.from(tagsByKey, ([key, label]) => ({ key, label }))
+		.sort((left, right) => left.label.localeCompare(right.label));
+}
 
 function formatDate(value) {
 	const date = new Date(value);
@@ -57,8 +116,37 @@ function matchesSearch(highlight) {
 
 function getVisibleHighlights() {
 	return highlights
-		.filter(highlight => (!starredOnly || highlight.starred === true) && matchesSearch(highlight))
+		.filter(highlight => {
+			const matchesTag = !selectedTag || getHighlightTags(highlight).some(tag => getTagKey(tag) === selectedTag);
+			return (!starredOnly || highlight.starred === true) && matchesTag && matchesSearch(highlight);
+		})
 		.sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
+function renderTagFilters(allTags) {
+	tagFiltersElement.hidden = allTags.length === 0;
+	if (allTags.length === 0) {
+		tagFilterOptionsElement.replaceChildren();
+		return;
+	}
+
+	const createFilterButton = (label, key) => {
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "tag-filter";
+		button.textContent = label;
+		button.setAttribute("aria-pressed", String(selectedTag === key));
+		button.addEventListener("click", () => {
+			selectedTag = key;
+			render();
+		});
+		return button;
+	};
+
+	tagFilterOptionsElement.replaceChildren(
+		createFilterButton("All", ""),
+		...allTags.map(tag => createFilterButton(`#${tag.label}`, tag.key)),
+	);
 }
 
 function groupHighlights(visibleHighlights) {
@@ -112,6 +200,7 @@ async function toggleStarred(highlight) {
 }
 
 function openNoteEditor(item, highlight) {
+	item.querySelector(".tag-editor")?.remove();
 	const existingEditor = item.querySelector(".note-editor");
 	if (existingEditor) {
 		existingEditor.querySelector("textarea")?.focus();
@@ -163,6 +252,75 @@ function openNoteEditor(item, highlight) {
 	textarea.setSelectionRange(textarea.value.length, textarea.value.length);
 }
 
+function openTagEditor(item, highlight) {
+	item.querySelector(".note-editor")?.remove();
+	const existingEditor = item.querySelector(".tag-editor");
+	if (existingEditor) {
+		existingEditor.querySelector("input")?.focus();
+		return;
+	}
+
+	const editor = document.createElement("form");
+	editor.className = "tag-editor";
+
+	const label = document.createElement("label");
+	label.textContent = "Tags";
+	const input = document.createElement("input");
+	input.type = "text";
+	input.value = getHighlightTags(highlight).join(", ");
+	input.placeholder = "research, idea";
+	input.autocomplete = "off";
+	input.setAttribute("aria-describedby", `tag-help-${highlight.id}`);
+	input.addEventListener("input", () => input.setCustomValidity(""));
+	label.append(input);
+
+	const help = document.createElement("span");
+	help.id = `tag-help-${highlight.id}`;
+	help.className = "editor-help";
+	help.textContent = `Separate tags with commas · ${TAG_MAX_COUNT} maximum`;
+
+	const actions = document.createElement("div");
+	actions.className = "tag-editor-actions";
+	const cancelButton = document.createElement("button");
+	cancelButton.type = "button";
+	cancelButton.textContent = "Cancel";
+	cancelButton.addEventListener("click", () => editor.remove());
+	const saveButton = document.createElement("button");
+	saveButton.type = "submit";
+	saveButton.className = "primary-button";
+	saveButton.textContent = "Save tags";
+	actions.append(cancelButton, saveButton);
+	editor.append(label, help, actions);
+
+	editor.addEventListener("submit", async event => {
+		event.preventDefault();
+		let tags;
+		try {
+			tags = parseTags(input.value);
+			input.setCustomValidity("");
+		} catch (error) {
+			input.setCustomValidity(error.message);
+			input.reportValidity();
+			return;
+		}
+
+		saveButton.disabled = true;
+		try {
+			const changed = await updateHighlight(highlight.id, () => ({ tags }));
+			if (!changed) editor.remove();
+			statusElement.textContent = tags.length ? "Tags saved" : "Tags removed";
+		} catch (error) {
+			console.error("[Highlight] could not save tags", error);
+			statusElement.textContent = "Could not save tags";
+			saveButton.disabled = false;
+		}
+	});
+
+	item.insertBefore(editor, item.querySelector(".card-footer"));
+	input.focus();
+	input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function createHighlightCard(highlight) {
 	const item = document.createElement("li");
 	item.className = "highlight-card";
@@ -191,6 +349,26 @@ function createHighlightCard(highlight) {
 		item.append(note);
 	}
 
+	const tags = getHighlightTags(highlight);
+	if (tags.length) {
+		const tagList = document.createElement("div");
+		tagList.className = "card-tags";
+		tagList.setAttribute("aria-label", "Highlight tags");
+		for (const tag of tags) {
+			const tagButton = document.createElement("button");
+			tagButton.type = "button";
+			tagButton.className = "tag-chip";
+			tagButton.textContent = `#${tag}`;
+			tagButton.title = `Show highlights tagged ${tag}`;
+			tagButton.addEventListener("click", () => {
+				selectedTag = getTagKey(tag);
+				render();
+			});
+			tagList.append(tagButton);
+		}
+		item.append(tagList);
+	}
+
 	const footer = document.createElement("div");
 	footer.className = "card-footer";
 
@@ -208,6 +386,13 @@ function createHighlightCard(highlight) {
 	noteButton.setAttribute("aria-label", highlight.note ? "Edit note" : "Add note");
 	noteButton.addEventListener("click", () => openNoteEditor(item, highlight));
 
+	const tagButton = document.createElement("button");
+	tagButton.className = "tag-button";
+	tagButton.type = "button";
+	tagButton.textContent = tags.length ? "Edit tags" : "Tags";
+	tagButton.setAttribute("aria-label", tags.length ? "Edit tags" : "Add tags");
+	tagButton.addEventListener("click", () => openTagEditor(item, highlight));
+
 	const starButton = document.createElement("button");
 	starButton.className = "star-button";
 	starButton.type = "button";
@@ -223,7 +408,7 @@ function createHighlightCard(highlight) {
 	deleteButton.setAttribute("aria-label", `Delete highlight: ${highlight.exactText || "Untitled highlight"}`);
 	deleteButton.addEventListener("click", () => deleteHighlight(highlight.id));
 
-	actions.append(noteButton, starButton, deleteButton);
+	actions.append(noteButton, tagButton, starButton, deleteButton);
 	footer.append(metadata, actions);
 	item.append(footer);
 	return item;
@@ -278,9 +463,12 @@ function createConversationGroup(group, index) {
 }
 
 function render() {
+	const allTags = getAllTags();
+	if (selectedTag && !allTags.some(tag => tag.key === selectedTag)) selectedTag = "";
+	renderTagFilters(allTags);
 	const visibleHighlights = getVisibleHighlights();
 	const groups = groupHighlights(visibleHighlights);
-	const filtersActive = Boolean(searchQuery) || starredOnly;
+	const filtersActive = Boolean(searchQuery) || starredOnly || Boolean(selectedTag);
 
 	countElement.textContent = filtersActive
 		? `${visibleHighlights.length}/${highlights.length}`
@@ -289,7 +477,7 @@ function render() {
 	if (visibleHighlights.length === 0) {
 		emptyTitleElement.textContent = filtersActive ? "No matching highlights" : "No highlights yet";
 		emptyDescriptionElement.textContent = filtersActive
-			? "Try another search or clear the starred filter."
+			? "Try another search or clear the active filters."
 			: "Select text in a ChatGPT conversation, then choose Highlight from the context menu.";
 	}
 	listElement.replaceChildren(...groups.map(createConversationGroup));
@@ -326,6 +514,8 @@ function createMarkdownExport() {
 		for (const highlight of group.highlights) {
 			sections.push("", markdownQuote(highlight.exactText || "Untitled highlight"));
 			if (highlight.note) sections.push("", `Note: ${highlight.note}`);
+			const tags = getHighlightTags(highlight);
+			if (tags.length) sections.push(`Tags: ${tags.map(tag => `#${tag}`).join(" ")}`);
 			sections.push("", `Saved: ${formatDate(highlight.createdAt)}`);
 			if (highlight.url) sections.push(`Source: ${highlight.url}`);
 		}
