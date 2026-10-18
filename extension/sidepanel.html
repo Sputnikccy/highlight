@@ -22,7 +22,7 @@
 					<input id="search-input" type="search" placeholder="Search highlights" autocomplete="off">
 				</label>
 				<div class="control-actions">
-					<button id="starred-filter" class="filter-button" type="button" aria-pressed="false">☆ Starred</button>
+					<button id="select-mode" class="filter-button" type="button" aria-pressed="false">Select</button>
 					<details id="data-menu" class="export-menu">
 						<summary>Data</summary>
 						<div class="export-options" aria-label="Library data options">
@@ -34,10 +34,47 @@
 					<input id="import-file" type="file" accept=".json,application/json" hidden>
 				</div>
 			</div>
+			<div class="organization-controls">
+				<label class="compact-select">
+					<span>View</span>
+					<select id="view-filter">
+						<option value="all">All highlights</option>
+						<option value="starred">Starred</option>
+						<option value="notes">With notes</option>
+						<option value="untagged">Untagged</option>
+					</select>
+				</label>
+				<label class="compact-select">
+					<span>Sort</span>
+					<select id="sort-order">
+						<option value="newest">Newest first</option>
+						<option value="oldest">Oldest first</option>
+					</select>
+				</label>
+			</div>
 			<div id="tag-filters" class="tag-filters" hidden>
 				<span class="tag-filter-label">Tags</span>
 				<div id="tag-filter-options" class="tag-filter-options" aria-label="Filter highlights by tag"></div>
 			</div>
+			<section id="bulk-toolbar" class="bulk-toolbar" aria-label="Bulk highlight actions" hidden>
+				<div class="bulk-toolbar-row">
+					<strong id="selection-count" aria-live="polite">0 selected</strong>
+					<button id="select-all" type="button">Select all results</button>
+				</div>
+				<div class="bulk-actions">
+					<button id="bulk-star" type="button" disabled>★ Star</button>
+					<button id="bulk-tag" type="button" disabled>+ Tags</button>
+					<button id="bulk-delete" class="danger-button" type="button" disabled>Delete</button>
+				</div>
+				<form id="bulk-tag-editor" class="bulk-tag-editor" hidden>
+					<label>
+						<span class="visually-hidden">Tags to add</span>
+						<input id="bulk-tag-input" type="text" placeholder="idea, research" autocomplete="off">
+					</label>
+					<button id="bulk-tag-cancel" type="button">Cancel</button>
+					<button class="primary-button" type="submit">Add tags</button>
+				</form>
+			</section>
 			<div id="data-notice" class="data-notice" hidden role="status">
 				<span id="data-notice-message"></span>
 				<button id="data-notice-dismiss" type="button" aria-label="Dismiss message">×</button>
