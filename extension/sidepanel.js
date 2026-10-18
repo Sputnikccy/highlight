@@ -9,6 +9,7 @@ const QUESTION_CONTEXT_MAX_LENGTH = 500;
 const CONTEXT_PREVIEW_LENGTH = 360;
 const IMPORT_MAX_FILE_SIZE = 5 * 1024 * 1024;
 const IMPORT_MAX_HIGHLIGHTS = 10000;
+const LIBRARY_PAGE_SIZE = 50;
 const SUPPORTED_HOSTS = new Set(["chatgpt.com", "chat.openai.com"]);
 
 const countElement = document.querySelector("#highlight-count");
@@ -16,6 +17,9 @@ const emptyStateElement = document.querySelector("#empty-state");
 const emptyTitleElement = document.querySelector("#empty-title");
 const emptyDescriptionElement = document.querySelector("#empty-description");
 const listElement = document.querySelector("#highlight-list");
+const loadMoreContainerElement = document.querySelector("#load-more-container");
+const loadMoreStatusElement = document.querySelector("#load-more-status");
+const loadMoreElement = document.querySelector("#load-more");
 const searchInputElement = document.querySelector("#search-input");
 const selectModeElement = document.querySelector("#select-mode");
 const viewFilterElement = document.querySelector("#view-filter");
@@ -46,6 +50,7 @@ let sortOrder = "newest";
 let selectedTag = "";
 let selectionMode = false;
 let bulkActionPending = false;
+let visibleLimit = LIBRARY_PAGE_SIZE;
 const selectedHighlightIds = new Set();
 const collapsedGroups = new Set();
 
@@ -360,6 +365,20 @@ function getVisibleHighlights() {
 		});
 }
 
+function resetResultWindow() {
+	visibleLimit = LIBRARY_PAGE_SIZE;
+}
+
+function getResultWindow(visibleHighlights) {
+	const renderedHighlights = visibleHighlights.slice(0, visibleLimit);
+	const remaining = Math.max(0, visibleHighlights.length - renderedHighlights.length);
+	return {
+		renderedHighlights,
+		remaining,
+		nextCount: Math.min(LIBRARY_PAGE_SIZE, remaining),
+	};
+}
+
 function renderTagFilters(allTags) {
 	tagFiltersElement.hidden = allTags.length === 0;
 	if (allTags.length === 0) {
@@ -375,6 +394,7 @@ function renderTagFilters(allTags) {
 		button.setAttribute("aria-pressed", String(selectedTag === key));
 		button.addEventListener("click", () => {
 			selectedTag = key;
+			resetResultWindow();
 			render();
 		});
 		return button;
@@ -407,7 +427,7 @@ async function openHighlight(highlight) {
 		statusElement.textContent = "Opening source highlight";
 	} catch (error) {
 		console.error("[Highlight] could not open source highlight", error);
-		statusElement.textContent = "Could not open source highlight";
+		showDataNotice("Could not open source highlight", "error");
 	}
 }
 
@@ -432,7 +452,7 @@ async function toggleStarred(highlight) {
 		}
 	} catch (error) {
 		console.error("[Highlight] could not update starred state", error);
-		statusElement.textContent = "Could not update highlight";
+		showDataNotice("Could not update highlight", "error");
 	}
 }
 
@@ -481,7 +501,7 @@ async function toggleBulkStarred() {
 		statusElement.textContent = `${selected.length} highlight${selected.length === 1 ? "" : "s"} ${starred ? "starred" : "unstarred"}`;
 	} catch (error) {
 		console.error("[Highlight] could not update selected highlights", error);
-		statusElement.textContent = "Could not update selected highlights";
+		showDataNotice("Could not update selected highlights", "error");
 	} finally {
 		bulkActionPending = false;
 		render();
@@ -504,11 +524,26 @@ function mergeHighlightTags(highlight, additions) {
 }
 
 async function addBulkTags(value) {
-	const additions = parseTags(value);
-	if (additions.length === 0) throw new Error("Enter at least one tag");
+	let additions;
+	try {
+		additions = parseTags(value);
+	} catch (error) {
+		error.isValidationError = true;
+		throw error;
+	}
+	if (additions.length === 0) {
+		const error = new Error("Enter at least one tag");
+		error.isValidationError = true;
+		throw error;
+	}
 	const selected = getSelectedHighlights();
 	if (selected.length === 0) return;
-	for (const highlight of selected) mergeHighlightTags(highlight, additions);
+	try {
+		for (const highlight of selected) mergeHighlightTags(highlight, additions);
+	} catch (error) {
+		error.isValidationError = true;
+		throw error;
+	}
 	await updateHighlightsByIds(
 		selected.map(highlight => highlight.id),
 		highlight => ({ tags: mergeHighlightTags(highlight, additions) }),
@@ -540,7 +575,7 @@ async function deleteSelectedHighlights() {
 		statusElement.textContent = `${selected.length} highlight${selected.length === 1 ? "" : "s"} deleted`;
 	} catch (error) {
 		console.error("[Highlight] could not delete selected highlights", error);
-		statusElement.textContent = "Could not delete selected highlights";
+		showDataNotice("Could not delete selected highlights", "error");
 	} finally {
 		bulkActionPending = false;
 		render();
@@ -590,7 +625,7 @@ function openNoteEditor(item, highlight) {
 			statusElement.textContent = note ? "Note saved" : "Note removed";
 		} catch (error) {
 			console.error("[Highlight] could not save note", error);
-			statusElement.textContent = "Could not save note";
+			showDataNotice("Could not save note", "error");
 			saveButton.disabled = false;
 		}
 	});
@@ -659,7 +694,7 @@ function openTagEditor(item, highlight) {
 			statusElement.textContent = tags.length ? "Tags saved" : "Tags removed";
 		} catch (error) {
 			console.error("[Highlight] could not save tags", error);
-			statusElement.textContent = "Could not save tags";
+			showDataNotice("Could not save tags", "error");
 			saveButton.disabled = false;
 		}
 	});
@@ -856,6 +891,7 @@ function createHighlightCard(highlight) {
 			tagButton.title = `Show highlights tagged ${tag}`;
 			tagButton.addEventListener("click", () => {
 				selectedTag = getTagKey(tag);
+				resetResultWindow();
 				render();
 			});
 			tagList.append(tagButton);
@@ -964,11 +1000,12 @@ function render() {
 	if (selectedTag && !allTags.some(tag => tag.key === selectedTag)) selectedTag = "";
 	renderTagFilters(allTags);
 	const visibleHighlights = getVisibleHighlights();
+	const { renderedHighlights, remaining, nextCount } = getResultWindow(visibleHighlights);
 	const visibleIds = new Set(visibleHighlights.map(highlight => highlight.id));
 	for (const highlightId of selectedHighlightIds) {
 		if (!visibleIds.has(highlightId)) selectedHighlightIds.delete(highlightId);
 	}
-	const groups = groupHighlights(visibleHighlights);
+	const groups = groupHighlights(renderedHighlights);
 	const filtersActive = Boolean(searchQuery) || selectedView !== "all" || Boolean(selectedTag);
 	const selected = getSelectedHighlights();
 	const allVisibleSelected = visibleHighlights.length > 0 && visibleHighlights.every(highlight => selectedHighlightIds.has(highlight.id));
@@ -996,6 +1033,9 @@ function render() {
 			? "Try another search or clear the active filters."
 			: "Select text in a ChatGPT conversation, then choose Highlight from the context menu.";
 	}
+	loadMoreContainerElement.hidden = remaining === 0;
+	loadMoreStatusElement.textContent = `Showing ${renderedHighlights.length} of ${visibleHighlights.length}`;
+	loadMoreElement.textContent = `Show ${nextCount} more`;
 	listElement.replaceChildren(...groups.map(createConversationGroup));
 }
 
@@ -1010,7 +1050,7 @@ async function deleteHighlight(highlightId) {
 		statusElement.textContent = "Highlight deleted";
 	} catch (error) {
 		console.error("[Highlight] could not delete highlight", error);
-		statusElement.textContent = "Could not delete highlight";
+		showDataNotice("Could not delete highlight", "error");
 	}
 }
 
@@ -1071,16 +1111,24 @@ async function initialize() {
 
 searchInputElement.addEventListener("input", event => {
 	searchQuery = event.target.value.trim().toLocaleLowerCase();
+	resetResultWindow();
 	render();
 });
 
 viewFilterElement.addEventListener("change", event => {
 	selectedView = event.target.value;
+	resetResultWindow();
 	render();
 });
 
 sortOrderElement.addEventListener("change", event => {
 	sortOrder = event.target.value;
+	resetResultWindow();
+	render();
+});
+
+loadMoreElement.addEventListener("click", () => {
+	visibleLimit += LIBRARY_PAGE_SIZE;
 	render();
 });
 
@@ -1125,8 +1173,13 @@ bulkTagEditorElement.addEventListener("submit", async event => {
 		bulkTagInputElement.value = "";
 		bulkTagInputElement.setCustomValidity("");
 	} catch (error) {
-		bulkTagInputElement.setCustomValidity(error.message);
-		bulkTagInputElement.reportValidity();
+		if (error.isValidationError) {
+			bulkTagInputElement.setCustomValidity(error.message);
+			bulkTagInputElement.reportValidity();
+		} else {
+			console.error("[Highlight] could not add tags to selected highlights", error);
+			showDataNotice("Could not add tags to selected highlights", "error");
+		}
 	} finally {
 		bulkActionPending = false;
 		submitButton.disabled = false;
@@ -1172,5 +1225,5 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 initialize().catch(error => {
 	console.error("[Highlight] library initialization failed", error);
-	statusElement.textContent = "Could not load highlights";
+	showDataNotice("Could not load Highlight Library", "error");
 });

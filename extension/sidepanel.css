@@ -358,6 +358,36 @@ h1 {
 	padding: 16px;
 }
 
+.load-more-container {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	padding: 0 16px 24px;
+	color: #77756c;
+	font-size: 11px;
+}
+
+.load-more-container[hidden] {
+	display: none;
+}
+
+.load-more-container button {
+	padding: 7px 11px;
+	border: 1px solid #dcdad2;
+	border-radius: 8px;
+	background: #fff;
+	color: #5f5d55;
+	cursor: pointer;
+}
+
+.load-more-container button:hover,
+.load-more-container button:focus-visible {
+	border-color: #c8ad33;
+	background: #fff4bd;
+	outline: none;
+}
+
 .data-notice {
 	display: flex;
 	align-items: center;
@@ -910,6 +940,12 @@ h1 {
 	.tag-editor input,
 	.note-editor-actions button,
 	.tag-editor-actions button {
+		border-color: #41423d;
+		background: #292a27;
+		color: #cfcec7;
+	}
+
+	.load-more-container button {
 		border-color: #41423d;
 		background: #292a27;
 		color: #cfcec7;
