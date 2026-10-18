@@ -2,7 +2,14 @@
 
 A Manifest V3 Chrome extension for persistent text highlights in ChatGPT conversations.
 
-## V0.6 in development
+## V0.7 in development
+
+- Save whether a highlight came from the user or the assistant.
+- Store a compact excerpt of the source message and associate assistant highlights with the preceding user question.
+- Expand a focused context excerpt inside Library cards, mark the selected words in yellow, and include the full context in search and Markdown exports.
+- Backfill context for older highlights when their source conversation is revisited and restored.
+
+## V0.6
 
 - Restore a Highlight Library from its JSON backup without replacing existing local data.
 - Validate imported records before storage and reject unsupported or malformed files.
@@ -73,6 +80,8 @@ extension/
 - Ambiguous selections that match more than one saved highlight are not removed automatically.
 - Conversation groups fall back to generic names when no saved conversation title is available.
 - Existing highlights receive their conversation title only after the source conversation is revisited.
+- Existing highlights receive message context only after their source text is restored on a revisited conversation.
+- Question association depends on ChatGPT continuing to expose user and assistant message roles in the page.
 - The library does not yet include cloud sync or automatic cross-device synchronization.
 - Moving highlights between browsers or devices still requires manual JSON export and import.
 - Restoration can still fail if ChatGPT changes or removes the saved text; progressive search cannot recover content that no longer exists in the page.
