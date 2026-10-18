@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Highlight",
-  "version": "0.5.0",
-  "description": "Save, revisit, annotate, and export highlights from ChatGPT conversations.",
+  "version": "0.6.0",
+  "description": "Save, organize, revisit, and back up highlights from ChatGPT conversations.",
   "permissions": ["contextMenus", "sidePanel", "storage"],
   "action": {
     "default_title": "Open Highlight Library"

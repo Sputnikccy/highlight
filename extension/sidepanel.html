@@ -23,18 +23,24 @@
 				</label>
 				<div class="control-actions">
 					<button id="starred-filter" class="filter-button" type="button" aria-pressed="false">☆ Starred</button>
-					<details id="export-menu" class="export-menu">
-						<summary>Export</summary>
-						<div class="export-options" aria-label="Export all highlights">
-							<button type="button" data-export-format="markdown">Markdown</button>
-							<button type="button" data-export-format="json">JSON</button>
+					<details id="data-menu" class="export-menu">
+						<summary>Data</summary>
+						<div class="export-options" aria-label="Library data options">
+							<button type="button" data-export-format="markdown">Export Markdown</button>
+							<button type="button" data-export-format="json">Export JSON</button>
+							<button id="import-json" type="button">Import JSON</button>
 						</div>
 					</details>
+					<input id="import-file" type="file" accept=".json,application/json" hidden>
 				</div>
 			</div>
 			<div id="tag-filters" class="tag-filters" hidden>
 				<span class="tag-filter-label">Tags</span>
 				<div id="tag-filter-options" class="tag-filter-options" aria-label="Filter highlights by tag"></div>
+			</div>
+			<div id="data-notice" class="data-notice" hidden role="status">
+				<span id="data-notice-message"></span>
+				<button id="data-notice-dismiss" type="button" aria-label="Dismiss message">×</button>
 			</div>
 		</header>
 

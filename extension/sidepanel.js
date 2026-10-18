@@ -2,6 +2,10 @@ const STORAGE_KEY = "highlights";
 const NOTE_MAX_LENGTH = 500;
 const TAG_MAX_COUNT = 8;
 const TAG_MAX_LENGTH = 24;
+const EXPORT_SCHEMA_VERSION = 1;
+const IMPORT_MAX_FILE_SIZE = 5 * 1024 * 1024;
+const IMPORT_MAX_HIGHLIGHTS = 10000;
+const SUPPORTED_HOSTS = new Set(["chatgpt.com", "chat.openai.com"]);
 
 const countElement = document.querySelector("#highlight-count");
 const emptyStateElement = document.querySelector("#empty-state");
@@ -10,9 +14,14 @@ const emptyDescriptionElement = document.querySelector("#empty-description");
 const listElement = document.querySelector("#highlight-list");
 const searchInputElement = document.querySelector("#search-input");
 const starredFilterElement = document.querySelector("#starred-filter");
-const exportMenuElement = document.querySelector("#export-menu");
+const dataMenuElement = document.querySelector("#data-menu");
+const importButtonElement = document.querySelector("#import-json");
+const importFileElement = document.querySelector("#import-file");
 const tagFiltersElement = document.querySelector("#tag-filters");
 const tagFilterOptionsElement = document.querySelector("#tag-filter-options");
+const dataNoticeElement = document.querySelector("#data-notice");
+const dataNoticeMessageElement = document.querySelector("#data-notice-message");
+const dataNoticeDismissElement = document.querySelector("#data-notice-dismiss");
 const statusElement = document.querySelector("#status");
 
 let highlights = [];
@@ -73,6 +82,174 @@ function getAllTags() {
 	}
 	return Array.from(tagsByKey, ([key, label]) => ({ key, label }))
 		.sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function importedHighlightError(index, message) {
+	return new Error(`Highlight ${index + 1}: ${message}`);
+}
+
+function normalizeImportedHighlight(value, index) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw importedHighlightError(index, "invalid record");
+	}
+	if (typeof value.id !== "string" || !value.id.trim() || value.id.length > 200) {
+		throw importedHighlightError(index, "missing a valid ID");
+	}
+	if (typeof value.exactText !== "string" || !value.exactText.trim()) {
+		throw importedHighlightError(index, "missing highlighted text");
+	}
+
+	let sourceUrl;
+	try {
+		sourceUrl = new URL(value.url);
+	} catch {
+		throw importedHighlightError(index, "has an invalid source URL");
+	}
+	if (sourceUrl.protocol !== "https:" || !SUPPORTED_HOSTS.has(sourceUrl.hostname)) {
+		throw importedHighlightError(index, "source must be a supported ChatGPT URL");
+	}
+
+	if (!Number.isInteger(value.startOffset) || value.startOffset < 0) {
+		throw importedHighlightError(index, "has an invalid start offset");
+	}
+	if (!Number.isInteger(value.endOffset) || value.endOffset < value.startOffset) {
+		throw importedHighlightError(index, "has an invalid end offset");
+	}
+
+	const createdAt = new Date(value.createdAt);
+	if (Number.isNaN(createdAt.getTime())) {
+		throw importedHighlightError(index, "has an invalid saved date");
+	}
+
+	if (
+		value.tags !== undefined &&
+		(!Array.isArray(value.tags) || value.tags.some(tag => typeof tag !== "string"))
+	) {
+		throw importedHighlightError(index, "has invalid tags");
+	}
+	const tags = getHighlightTags({ tags: value.tags });
+	if (tags.length > TAG_MAX_COUNT || tags.some(tag => tag.length > TAG_MAX_LENGTH)) {
+		throw importedHighlightError(index, "contains unsupported tags");
+	}
+	if (value.note !== undefined && typeof value.note !== "string") {
+		throw importedHighlightError(index, "has an invalid note");
+	}
+	if ((value.note || "").length > NOTE_MAX_LENGTH) {
+		throw importedHighlightError(index, `note exceeds ${NOTE_MAX_LENGTH} characters`);
+	}
+
+	const locator = value.messageLocator && typeof value.messageLocator === "object"
+		? value.messageLocator
+		: {};
+	const optionalString = input => typeof input === "string" && input ? input : null;
+
+	return {
+		id: value.id.trim(),
+		exactText: value.exactText,
+		prefix: typeof value.prefix === "string" ? value.prefix : "",
+		suffix: typeof value.suffix === "string" ? value.suffix : "",
+		startOffset: value.startOffset,
+		endOffset: value.endOffset,
+		url: sourceUrl.href,
+		conversationId: optionalString(value.conversationId),
+		conversationTitle: optionalString(value.conversationTitle)?.slice(0, 200) || null,
+		messageLocator: {
+			tagName: optionalString(locator.tagName),
+			messageId: optionalString(locator.messageId),
+			testId: optionalString(locator.testId),
+			authorRole: optionalString(locator.authorRole),
+			id: optionalString(locator.id),
+		},
+		tags,
+		note: value.note || "",
+		starred: value.starred === true,
+		createdAt: createdAt.toISOString(),
+	};
+}
+
+function parseImportPayload(text) {
+	let payload;
+	try {
+		payload = JSON.parse(text);
+	} catch {
+		throw new Error("This file is not valid JSON");
+	}
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+		throw new Error("Choose a Highlight JSON export");
+	}
+	if (payload.schemaVersion !== EXPORT_SCHEMA_VERSION) {
+		throw new Error("This backup version is not supported");
+	}
+	if (!Array.isArray(payload.highlights)) {
+		throw new Error("This backup does not contain a highlight library");
+	}
+	if (payload.highlights.length > IMPORT_MAX_HIGHLIGHTS) {
+		throw new Error(`A backup can contain up to ${IMPORT_MAX_HIGHLIGHTS} highlights`);
+	}
+	return payload.highlights.map(normalizeImportedHighlight);
+}
+
+function createImportPlan(importedHighlights, existingHighlights) {
+	const knownIds = new Set(
+		existingHighlights
+			.map(highlight => highlight?.id)
+			.filter(id => typeof id === "string" && id),
+	);
+	const additions = [];
+	let duplicates = 0;
+	for (const highlight of importedHighlights) {
+		if (knownIds.has(highlight.id)) {
+			duplicates += 1;
+			continue;
+		}
+		knownIds.add(highlight.id);
+		additions.push(highlight);
+	}
+	return { additions, duplicates };
+}
+
+function showDataNotice(message, tone = "success") {
+	dataNoticeMessageElement.textContent = message;
+	dataNoticeElement.dataset.tone = tone;
+	dataNoticeElement.hidden = false;
+	statusElement.textContent = message;
+}
+
+async function importJsonFile(file) {
+	if (!file) return;
+	if (file.size > IMPORT_MAX_FILE_SIZE) {
+		throw new Error("Choose a JSON backup smaller than 5 MB");
+	}
+
+	const importedHighlights = parseImportPayload(await file.text());
+	const stored = await chrome.storage.local.get(STORAGE_KEY);
+	const storedHighlights = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
+	const { additions, duplicates } = createImportPlan(importedHighlights, storedHighlights);
+
+	if (additions.length === 0) {
+		if (duplicates) {
+			showDataNotice(
+				`Import complete · No new highlights · ${duplicates} duplicate${duplicates === 1 ? "" : "s"} skipped`,
+			);
+		} else {
+			showDataNotice("This backup is empty", "neutral");
+		}
+		return;
+	}
+
+	const confirmed = window.confirm(
+		`Import ${additions.length} highlight${additions.length === 1 ? "" : "s"}? ` +
+		"Your current library will be kept and duplicates will be skipped.",
+	);
+	if (!confirmed) return;
+
+	await chrome.storage.local.set({ [STORAGE_KEY]: [...storedHighlights, ...additions] });
+	const duplicateMessage = duplicates
+		? ` · ${duplicates} duplicate${duplicates === 1 ? "" : "s"} skipped`
+		: "";
+	showDataNotice(
+		`${additions.length} highlight${additions.length === 1 ? "" : "s"} imported${duplicateMessage}`,
+	);
 }
 
 function formatDate(value) {
@@ -237,8 +414,8 @@ function openNoteEditor(item, highlight) {
 		saveButton.disabled = true;
 		try {
 			const note = textarea.value.trim();
-			const changed = await updateHighlight(highlight.id, () => ({ note }));
-			if (!changed) editor.remove();
+			await updateHighlight(highlight.id, () => ({ note }));
+			editor.remove();
 			statusElement.textContent = note ? "Note saved" : "Note removed";
 		} catch (error) {
 			console.error("[Highlight] could not save note", error);
@@ -306,8 +483,8 @@ function openTagEditor(item, highlight) {
 
 		saveButton.disabled = true;
 		try {
-			const changed = await updateHighlight(highlight.id, () => ({ tags }));
-			if (!changed) editor.remove();
+			await updateHighlight(highlight.id, () => ({ tags }));
+			editor.remove();
 			statusElement.textContent = tags.length ? "Tags saved" : "Tags removed";
 		} catch (error) {
 			console.error("[Highlight] could not save tags", error);
@@ -527,7 +704,7 @@ function downloadExport(format) {
 	const date = new Date().toISOString().slice(0, 10);
 	const isJson = format === "json";
 	const content = isJson
-		? JSON.stringify({ schemaVersion: 1, exportedAt: new Date().toISOString(), highlights }, null, 2)
+		? JSON.stringify({ schemaVersion: EXPORT_SCHEMA_VERSION, exportedAt: new Date().toISOString(), highlights }, null, 2)
 		: createMarkdownExport();
 	const blob = new Blob([content], { type: isJson ? "application/json" : "text/markdown" });
 	const downloadUrl = URL.createObjectURL(blob);
@@ -538,8 +715,8 @@ function downloadExport(format) {
 	link.click();
 	link.remove();
 	setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
-	exportMenuElement.open = false;
-	statusElement.textContent = `Exported ${highlights.length} highlights as ${isJson ? "JSON" : "Markdown"}`;
+	dataMenuElement.open = false;
+	showDataNotice(`Exported ${highlights.length} highlights as ${isJson ? "JSON" : "Markdown"}`);
 }
 
 async function initialize() {
@@ -562,6 +739,30 @@ starredFilterElement.addEventListener("click", () => {
 
 document.querySelectorAll("[data-export-format]").forEach(button => {
 	button.addEventListener("click", () => downloadExport(button.dataset.exportFormat));
+});
+
+importButtonElement.addEventListener("click", () => {
+	dataMenuElement.open = false;
+	showDataNotice("Choose a Highlight JSON backup to import", "neutral");
+	importFileElement.value = "";
+	importFileElement.click();
+});
+
+importFileElement.addEventListener("change", async () => {
+	try {
+		const file = importFileElement.files?.item(0);
+		if (!file) return;
+		showDataNotice("Checking backup…", "neutral");
+		await importJsonFile(file);
+	} catch (error) {
+		showDataNotice(`Import failed · ${error.message}`, "error");
+	} finally {
+		importFileElement.value = "";
+	}
+});
+
+dataNoticeDismissElement.addEventListener("click", () => {
+	dataNoticeElement.hidden = true;
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
