@@ -1,4 +1,5 @@
 const STORAGE_KEY = "highlights";
+const ONBOARDING_KEY = "welcomeV1Seen";
 const NOTE_MAX_LENGTH = 500;
 const TAG_MAX_COUNT = 8;
 const TAG_MAX_LENGTH = 24;
@@ -13,6 +14,7 @@ const LIBRARY_PAGE_SIZE = 50;
 const SUPPORTED_HOSTS = new Set(["chatgpt.com", "chat.openai.com"]);
 
 const countElement = document.querySelector("#highlight-count");
+const loadingStateElement = document.querySelector("#loading-state");
 const emptyStateElement = document.querySelector("#empty-state");
 const emptyTitleElement = document.querySelector("#empty-title");
 const emptyDescriptionElement = document.querySelector("#empty-description");
@@ -36,12 +38,16 @@ const bulkTagCancelElement = document.querySelector("#bulk-tag-cancel");
 const dataMenuElement = document.querySelector("#data-menu");
 const importButtonElement = document.querySelector("#import-json");
 const importFileElement = document.querySelector("#import-file");
+const aboutHighlightElement = document.querySelector("#about-highlight");
 const tagFiltersElement = document.querySelector("#tag-filters");
 const tagFilterOptionsElement = document.querySelector("#tag-filter-options");
 const dataNoticeElement = document.querySelector("#data-notice");
 const dataNoticeMessageElement = document.querySelector("#data-notice-message");
 const dataNoticeDismissElement = document.querySelector("#data-notice-dismiss");
 const statusElement = document.querySelector("#status");
+const welcomeDialogElement = document.querySelector("#welcome-dialog");
+const welcomeCloseElement = document.querySelector("#welcome-close");
+const welcomeDoneElement = document.querySelector("#welcome-done");
 
 let highlights = [];
 let searchQuery = "";
@@ -51,6 +57,7 @@ let selectedTag = "";
 let selectionMode = false;
 let bulkActionPending = false;
 let visibleLimit = LIBRARY_PAGE_SIZE;
+let welcomeReturnFocus = null;
 const selectedHighlightIds = new Set();
 const collapsedGroups = new Set();
 
@@ -262,6 +269,32 @@ function showDataNotice(message, tone = "success") {
 	statusElement.textContent = message;
 }
 
+function openWelcomeGuide() {
+	const activeElement = document.activeElement;
+	welcomeReturnFocus = activeElement === aboutHighlightElement
+		? dataMenuElement.querySelector("summary")
+		: activeElement instanceof HTMLElement && activeElement !== document.body
+			? activeElement
+			: searchInputElement;
+	dataMenuElement.open = false;
+	if (!welcomeDialogElement.open) welcomeDialogElement.showModal();
+}
+
+async function rememberWelcomeGuide() {
+	try {
+		await chrome.storage.local.set({ [ONBOARDING_KEY]: true });
+	} catch (error) {
+		console.error("[Highlight] could not save welcome preference", error);
+	}
+}
+
+async function closeWelcomeGuide() {
+	await rememberWelcomeGuide();
+	if (welcomeDialogElement.open) welcomeDialogElement.close();
+	welcomeReturnFocus?.focus();
+	welcomeReturnFocus = null;
+}
+
 async function importJsonFile(file) {
 	if (!file) return;
 	if (file.size > IMPORT_MAX_FILE_SIZE) {
@@ -369,6 +402,12 @@ function resetResultWindow() {
 	visibleLimit = LIBRARY_PAGE_SIZE;
 }
 
+function toggleTagFilter(key) {
+	selectedTag = key && selectedTag === key ? "" : key;
+	resetResultWindow();
+	render();
+}
+
 function getResultWindow(visibleHighlights) {
 	const renderedHighlights = visibleHighlights.slice(0, visibleLimit);
 	const remaining = Math.max(0, visibleHighlights.length - renderedHighlights.length);
@@ -388,14 +427,14 @@ function renderTagFilters(allTags) {
 
 	const createFilterButton = (label, key) => {
 		const button = document.createElement("button");
+		const isActive = selectedTag === key;
 		button.type = "button";
 		button.className = "tag-filter";
 		button.textContent = label;
-		button.setAttribute("aria-pressed", String(selectedTag === key));
+		button.title = key ? `${isActive ? "Clear" : "Filter by"} ${label}` : "Show all tags";
+		button.setAttribute("aria-pressed", String(isActive));
 		button.addEventListener("click", () => {
-			selectedTag = key;
-			resetResultWindow();
-			render();
+			toggleTagFilter(key);
 		});
 		return button;
 	};
@@ -885,14 +924,15 @@ function createHighlightCard(highlight) {
 		tagList.setAttribute("aria-label", "Highlight tags");
 		for (const tag of tags) {
 			const tagButton = document.createElement("button");
+			const tagKey = getTagKey(tag);
+			const isActive = selectedTag === tagKey;
 			tagButton.type = "button";
 			tagButton.className = "tag-chip";
 			tagButton.textContent = `#${tag}`;
-			tagButton.title = `Show highlights tagged ${tag}`;
+			tagButton.title = isActive ? `Clear ${tag} filter` : `Show highlights tagged ${tag}`;
+			tagButton.setAttribute("aria-pressed", String(isActive));
 			tagButton.addEventListener("click", () => {
-				selectedTag = getTagKey(tag);
-				resetResultWindow();
-				render();
+				toggleTagFilter(tagKey);
 			});
 			tagList.append(tagButton);
 		}
@@ -996,6 +1036,7 @@ function createConversationGroup(group, index) {
 }
 
 function render() {
+	loadingStateElement.hidden = true;
 	const allTags = getAllTags();
 	if (selectedTag && !allTags.some(tag => tag.key === selectedTag)) selectedTag = "";
 	renderTagFilters(allTags);
@@ -1104,9 +1145,10 @@ function downloadExport(format) {
 }
 
 async function initialize() {
-	const stored = await chrome.storage.local.get(STORAGE_KEY);
+	const stored = await chrome.storage.local.get([STORAGE_KEY, ONBOARDING_KEY]);
 	highlights = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
 	render();
+	if (stored[ONBOARDING_KEY] !== true) openWelcomeGuide();
 }
 
 searchInputElement.addEventListener("input", event => {
@@ -1198,6 +1240,14 @@ importButtonElement.addEventListener("click", () => {
 	importFileElement.click();
 });
 
+aboutHighlightElement.addEventListener("click", openWelcomeGuide);
+welcomeCloseElement.addEventListener("click", closeWelcomeGuide);
+welcomeDoneElement.addEventListener("click", closeWelcomeGuide);
+welcomeDialogElement.addEventListener("cancel", event => {
+	event.preventDefault();
+	closeWelcomeGuide();
+});
+
 importFileElement.addEventListener("change", async () => {
 	try {
 		const file = importFileElement.files?.item(0);
@@ -1225,5 +1275,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 initialize().catch(error => {
 	console.error("[Highlight] library initialization failed", error);
+	loadingStateElement.hidden = true;
+	emptyStateElement.hidden = false;
+	emptyTitleElement.textContent = "Library unavailable";
+	emptyDescriptionElement.textContent = "Close and reopen the side panel, then try again.";
 	showDataNotice("Could not load Highlight Library", "error");
 });

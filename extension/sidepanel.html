@@ -29,6 +29,8 @@
 							<button type="button" data-export-format="markdown">Export Markdown</button>
 							<button type="button" data-export-format="json">Export JSON</button>
 							<button id="import-json" type="button">Import JSON</button>
+							<span class="menu-separator" role="separator"></span>
+							<button id="about-highlight" type="button">How Highlight works</button>
 						</div>
 					</details>
 					<input id="import-file" type="file" accept=".json,application/json" hidden>
@@ -82,6 +84,10 @@
 		</header>
 
 		<main>
+			<section id="loading-state" class="loading-state" role="status" aria-live="polite">
+				<span class="loading-spinner" aria-hidden="true"></span>
+				<span>Loading Library…</span>
+			</section>
 			<section id="empty-state" class="empty-state" hidden>
 				<div class="empty-icon" aria-hidden="true">✦</div>
 				<h2 id="empty-title">No highlights yet</h2>
@@ -94,6 +100,37 @@
 				<button id="load-more" type="button">Show more</button>
 			</div>
 		</main>
+
+		<dialog id="welcome-dialog" class="welcome-dialog" aria-labelledby="welcome-title">
+			<div class="welcome-card">
+				<button id="welcome-close" class="welcome-close" type="button" aria-label="Close guide">×</button>
+				<p class="welcome-eyebrow">Welcome to Highlight</p>
+				<h2 id="welcome-title">Save the parts worth returning to.</h2>
+				<p class="welcome-intro">Highlight works directly in ChatGPT and keeps your Library close at hand.</p>
+				<ol class="welcome-steps">
+					<li>
+						<span class="welcome-step-number" aria-hidden="true">1</span>
+						<div><strong>Highlight</strong><span>Select text in ChatGPT, right-click, then choose Highlight.</span></div>
+					</li>
+					<li>
+						<span class="welcome-step-number" aria-hidden="true">2</span>
+						<div><strong>Organize</strong><span>Open the toolbar icon to search, star, tag, or add notes.</span></div>
+					</li>
+					<li>
+						<span class="welcome-step-number" aria-hidden="true">3</span>
+						<div><strong>Return</strong><span>Choose a Library card to reopen the conversation and find the saved text.</span></div>
+					</li>
+				</ol>
+				<div class="privacy-promise">
+					<strong>Local by default</strong>
+					<span>Your highlights stay in Chrome storage on this device. There is no Highlight account, server, analytics, or cloud sync.</span>
+				</div>
+				<div class="welcome-actions">
+					<a href="https://chatgpt.com/" target="_blank" rel="noreferrer">Open ChatGPT</a>
+					<button id="welcome-done" type="button">Got it</button>
+				</div>
+			</div>
+		</dialog>
 
 		<p id="status" class="visually-hidden" role="status" aria-live="polite"></p>
 		<script src="sidepanel.js"></script>

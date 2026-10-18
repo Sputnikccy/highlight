@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+	<title id="title">Highlight</title>
+	<rect x="16" y="16" width="96" height="96" rx="20" fill="#24231f"/>
+	<path d="M40 38h12v21h25V38h11v53H77V70H52v21H40z" fill="#fff"/>
+	<rect x="36" y="96" width="56" height="7" rx="3.5" fill="#ffd83d"/>
+</svg>
