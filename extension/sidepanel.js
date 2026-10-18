@@ -3,6 +3,10 @@ const NOTE_MAX_LENGTH = 500;
 const TAG_MAX_COUNT = 8;
 const TAG_MAX_LENGTH = 24;
 const EXPORT_SCHEMA_VERSION = 1;
+const CONTEXT_SCHEMA_VERSION = 1;
+const MESSAGE_CONTEXT_MAX_LENGTH = 704;
+const QUESTION_CONTEXT_MAX_LENGTH = 500;
+const CONTEXT_PREVIEW_LENGTH = 360;
 const IMPORT_MAX_FILE_SIZE = 5 * 1024 * 1024;
 const IMPORT_MAX_HIGHLIGHTS = 10000;
 const SUPPORTED_HOSTS = new Set(["chatgpt.com", "chat.openai.com"]);
@@ -137,6 +141,25 @@ function normalizeImportedHighlight(value, index) {
 	if ((value.note || "").length > NOTE_MAX_LENGTH) {
 		throw importedHighlightError(index, `note exceeds ${NOTE_MAX_LENGTH} characters`);
 	}
+	if (
+		value.messageRole !== undefined &&
+		value.messageRole !== null &&
+		value.messageRole !== "user" &&
+		value.messageRole !== "assistant"
+	) {
+		throw importedHighlightError(index, "has an invalid message role");
+	}
+	for (const [field, maxLength] of [
+		["messageContext", MESSAGE_CONTEXT_MAX_LENGTH],
+		["questionContext", QUESTION_CONTEXT_MAX_LENGTH],
+	]) {
+		if (value[field] !== undefined && value[field] !== null && typeof value[field] !== "string") {
+			throw importedHighlightError(index, `has invalid ${field}`);
+		}
+		if ((value[field] || "").length > maxLength) {
+			throw importedHighlightError(index, `${field} is too long`);
+		}
+	}
 
 	const locator = value.messageLocator && typeof value.messageLocator === "object"
 		? value.messageLocator
@@ -160,6 +183,10 @@ function normalizeImportedHighlight(value, index) {
 			authorRole: optionalString(locator.authorRole),
 			id: optionalString(locator.id),
 		},
+		contextVersion: value.contextVersion === CONTEXT_SCHEMA_VERSION ? CONTEXT_SCHEMA_VERSION : 0,
+		messageRole: value.messageRole === "user" || value.messageRole === "assistant" ? value.messageRole : null,
+		messageContext: optionalString(value.messageContext),
+		questionContext: optionalString(value.questionContext),
 		tags,
 		note: value.note || "",
 		starred: value.starred === true,
@@ -283,6 +310,8 @@ function matchesSearch(highlight) {
 		highlight.exactText,
 		highlight.note,
 		highlight.conversationTitle,
+		highlight.messageContext,
+		highlight.questionContext,
 		...(Array.isArray(highlight.tags) ? highlight.tags : []),
 	]
 		.filter(Boolean)
@@ -498,6 +527,120 @@ function openTagEditor(item, highlight) {
 	input.setSelectionRange(input.value.length, input.value.length);
 }
 
+function findContextHighlight(text, exactText) {
+	const selectedText = String(exactText || "").replace(/\s+/g, " ").trim();
+	if (!selectedText) return null;
+
+	const matches = [];
+	let index = text.indexOf(selectedText);
+	while (index !== -1) {
+		matches.push({ start: index, end: index + selectedText.length });
+		index = text.indexOf(selectedText, index + 1);
+	}
+	if (matches.length) {
+		const center = text.length / 2;
+		return matches.reduce((best, match) =>
+			Math.abs((match.start + match.end) / 2 - center) < Math.abs((best.start + best.end) / 2 - center)
+				? match
+				: best,
+		);
+	}
+
+	const visibleStart = text.startsWith("…") ? 1 : 0;
+	const visibleEnd = text.endsWith("…") ? text.length - 1 : text.length;
+	const visibleText = text.slice(visibleStart, visibleEnd).trim();
+	if (visibleText.length >= 20 && selectedText.includes(visibleText)) {
+		const start = text.indexOf(visibleText, visibleStart);
+		return { start, end: start + visibleText.length };
+	}
+	return null;
+}
+
+function createFocusedContext(text, exactText) {
+	const match = findContextHighlight(text, exactText);
+	if (!match || text.length <= CONTEXT_PREVIEW_LENGTH) return { text, match };
+
+	const selectedLength = match.end - match.start;
+	let start;
+	let end;
+	if (selectedLength >= CONTEXT_PREVIEW_LENGTH) {
+		start = match.start;
+		end = Math.min(text.length, start + CONTEXT_PREVIEW_LENGTH);
+	} else {
+		const surroundingLength = CONTEXT_PREVIEW_LENGTH - selectedLength;
+		start = Math.max(0, match.start - Math.floor(surroundingLength / 2));
+		end = Math.min(text.length, Math.max(match.end, start + CONTEXT_PREVIEW_LENGTH));
+		start = Math.max(0, Math.min(start, end - CONTEXT_PREVIEW_LENGTH));
+	}
+
+	const prefix = start > 0 ? "…" : "";
+	const suffix = end < text.length ? "…" : "";
+	return {
+		text: `${prefix}${text.slice(start, end)}${suffix}`,
+		match: {
+			start: prefix.length + match.start - start,
+			end: prefix.length + Math.min(match.end, end) - start,
+		},
+	};
+}
+
+function appendContextText(element, text, exactText = "") {
+	const presentation = exactText ? createFocusedContext(text, exactText) : { text, match: null };
+	if (!presentation.match) {
+		element.textContent = presentation.text;
+		return;
+	}
+
+	const { start, end } = presentation.match;
+	element.append(document.createTextNode(presentation.text.slice(0, start)));
+	const mark = document.createElement("mark");
+	mark.className = "context-highlight";
+	mark.textContent = presentation.text.slice(start, end);
+	element.append(mark, document.createTextNode(presentation.text.slice(end)));
+}
+
+function createContextDetails(highlight) {
+	const messageContext = typeof highlight.messageContext === "string" ? highlight.messageContext.trim() : "";
+	const questionContext = typeof highlight.questionContext === "string" ? highlight.questionContext.trim() : "";
+	if (!messageContext && !questionContext) return null;
+
+	const roleLabel = highlight.messageRole === "assistant"
+		? "Assistant"
+		: highlight.messageRole === "user"
+			? "You"
+			: "Message";
+	const details = document.createElement("details");
+	details.className = "context-details";
+	const summary = document.createElement("summary");
+	summary.textContent = `Context · ${roleLabel}`;
+	details.append(summary);
+
+	const body = document.createElement("div");
+	body.className = "context-body";
+	const appendContext = (labelText, text, exactText = "") => {
+		if (!text) return;
+		const section = document.createElement("div");
+		section.className = "context-section";
+		const label = document.createElement("p");
+		label.className = "context-label";
+		label.textContent = labelText;
+		const content = document.createElement("p");
+		content.className = "context-text";
+		appendContextText(content, text, exactText);
+		section.append(label, content);
+		body.append(section);
+	};
+
+	appendContext("Your question", questionContext);
+	appendContext(
+		highlight.messageRole === "assistant" ? "Assistant response" : highlight.messageRole === "user" ? "Your message" : "Message",
+		messageContext,
+		highlight.exactText,
+	);
+	details.append(body);
+	return details;
+}
+
 function createHighlightCard(highlight) {
 	const item = document.createElement("li");
 	item.className = "highlight-card";
@@ -545,6 +688,9 @@ function createHighlightCard(highlight) {
 		}
 		item.append(tagList);
 	}
+
+	const contextDetails = createContextDetails(highlight);
+	if (contextDetails) item.append(contextDetails);
 
 	const footer = document.createElement("div");
 	footer.className = "card-footer";
@@ -690,6 +836,11 @@ function createMarkdownExport() {
 		sections.push("", `## ${getConversationTitle(group, index)}`);
 		for (const highlight of group.highlights) {
 			sections.push("", markdownQuote(highlight.exactText || "Untitled highlight"));
+			if (highlight.messageRole) {
+				sections.push("", `Role: ${highlight.messageRole === "assistant" ? "Assistant" : "You"}`);
+			}
+			if (highlight.questionContext) sections.push(`Question: ${highlight.questionContext}`);
+			if (highlight.messageContext) sections.push(`Context: ${highlight.messageContext}`);
 			if (highlight.note) sections.push("", `Note: ${highlight.note}`);
 			const tags = getHighlightTags(highlight);
 			if (tags.length) sections.push(`Tags: ${tags.map(tag => `#${tag}`).join(" ")}`);
