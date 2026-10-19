@@ -1,15 +1,29 @@
 # Highlight
 
-A Manifest V3 Chrome extension for persistent text highlights in ChatGPT conversations.
+A local-first Chrome extension for saving, organizing, and returning to the parts of ChatGPT conversations worth keeping.
 
-## V1.0 in development
+[Product website](https://sputnikccy.github.io/highlight-site/) · [V1.0 release](https://github.com/Sputnikccy/highlight/releases/tag/v1.0.0) · [Privacy policy](PRIVACY.md)
 
-- Welcome first-time users with a short three-step guide that remains available from the Library data menu.
-- Explain in the product that highlights stay in local Chrome storage and are not sent to a Highlight server.
-- Show a real Library loading state and a persistent recovery message if local data cannot be loaded.
-- Add consistent keyboard focus treatment, reduced-motion support, and accessible dialog behavior.
-- Add production extension icons for the toolbar, extension manager, installation, and Chrome Web Store.
-- Prepare privacy, store-listing, and release-checklist documentation for the first public release.
+## Why Highlight
+
+Long conversations contain ideas, explanations, and decisions that are easy to lose. Highlight turns selected passages into a personal, searchable library while preserving enough context to help you understand why they mattered.
+
+- Highlight text without rewriting ChatGPT's page structure.
+- Restore highlights after refreshing or reopening a conversation.
+- Return from the Library to the original passage.
+- Organize saved passages with search, stars, notes, tags, views, and sorting.
+- Select multiple highlights for bulk starring, tagging, or deletion.
+- Export the library as Markdown or JSON and restore it from a JSON backup.
+- Keep all saved data in local Chrome storage with no Highlight account or backend.
+
+## V1.0
+
+- Welcomes first-time users with a short three-step guide that remains available from the Library data menu.
+- Explains in the product that highlights stay in local Chrome storage and are not sent to a Highlight server.
+- Shows a real Library loading state and a persistent recovery message if local data cannot be loaded.
+- Adds consistent keyboard focus treatment, reduced-motion support, and accessible dialog behavior.
+- Includes production extension icons for the toolbar, extension manager, installation, and Chrome Web Store.
+- Includes privacy, store-listing, and release-checklist documentation for the first public release.
 
 ## V0.9
 
@@ -105,7 +119,7 @@ extension/
 
 ## Known limitations
 
-- V0.1 supports `chatgpt.com` and the legacy `chat.openai.com` host only.
+- The current release supports `chatgpt.com` and the legacy `chat.openai.com` host only.
 - Restoration depends on ChatGPT message text and structure remaining sufficiently similar.
 - Ambiguous selections that match more than one saved highlight are not removed automatically.
 - Conversation groups fall back to generic names when no saved conversation title is available.
@@ -120,3 +134,7 @@ extension/
 
 - [Chrome Web Store listing copy](STORE_LISTING.md)
 - [V1.0 release checklist](RELEASE_CHECKLIST.md)
+
+## License
+
+Highlight is open source under the [MIT License](LICENSE).
