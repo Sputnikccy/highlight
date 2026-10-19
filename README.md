@@ -2,7 +2,16 @@
 
 A Manifest V3 Chrome extension for persistent text highlights in ChatGPT conversations.
 
-## V0.9 in development
+## V1.0 in development
+
+- Welcome first-time users with a short three-step guide that remains available from the Library data menu.
+- Explain in the product that highlights stay in local Chrome storage and are not sent to a Highlight server.
+- Show a real Library loading state and a persistent recovery message if local data cannot be loaded.
+- Add consistent keyboard focus treatment, reduced-motion support, and accessible dialog behavior.
+- Add production extension icons for the toolbar, extension manager, installation, and Chrome Web Store.
+- Prepare privacy, store-listing, and release-checklist documentation for the first public release.
+
+## V0.9
 
 - Render large libraries in batches of 50 while search, filters, and bulk selection still cover every matching result.
 - Load additional result batches without losing the current view, sort order, or selected highlights.
@@ -67,6 +76,12 @@ A Manifest V3 Chrome extension for persistent text highlights in ChatGPT convers
 
 Saved highlights use the selected text, nearby prefix and suffix context, character offsets, conversation URL, and message hints. DOM `Range` objects are used only while the page is open and are never persisted.
 
+## Data and privacy
+
+Highlight has no account, backend, analytics, advertising, or cloud synchronization. Highlight text, nearby context, source URLs, notes, tags, and preferences remain in `chrome.storage.local` on the user's device unless the user explicitly exports a backup file.
+
+See [PRIVACY.md](PRIVACY.md) for the complete data-handling disclosure.
+
 ## Install for development
 
 1. Open `chrome://extensions` in Chrome.
@@ -80,6 +95,7 @@ Saved highlights use the selected text, nearby prefix and suffix context, charac
 extension/
 ├── background.js  # Context-menu registration and command routing
 ├── content.js     # Selection capture, persistence, restoration, and removal
+├── icons/         # Toolbar and store icon assets
 ├── manifest.json  # Manifest V3 configuration
 ├── sidepanel.css  # Library presentation
 ├── sidepanel.html # Highlight Library structure
@@ -99,3 +115,8 @@ extension/
 - The library does not yet include cloud sync or automatic cross-device synchronization.
 - Moving highlights between browsers or devices still requires manual JSON export and import.
 - Restoration can still fail if ChatGPT changes or removes the saved text; progressive search cannot recover content that no longer exists in the page.
+
+## Release preparation
+
+- [Chrome Web Store listing copy](STORE_LISTING.md)
+- [V1.0 release checklist](RELEASE_CHECKLIST.md)
